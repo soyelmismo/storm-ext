@@ -1,0 +1,9 @@
+{
+  "name": "Storm-ext Fork by redblacker8 by soyelmismo",
+  "description": "A Storm-ext fork with the redblacker8 changes. and some extras",
+  "iconUrl": "https://raw.githubusercontent.com/soyelmismo/storm-ext/master/assets/repoIcon.jpg",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/soyelmismo/storm-ext/builds/plugins.json"
+  ]
+}
