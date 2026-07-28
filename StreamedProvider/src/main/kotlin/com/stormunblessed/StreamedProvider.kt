@@ -13,6 +13,7 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.stormunblessed.APIMatch
 import com.stormunblessed.MatchesResult
 import com.stormunblessed.SourceResult
+import com.stormunblessed.SportsResult
 import com.stormunblessed.defaultPoster
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,21 @@ class StreamedProvider : MainAPI() {
     override val mainPage = mainPageOf(
         "/api/matches/live/popular" to "Live Popular",
         "/api/matches/live" to "Live",
+        "/api/matches/football/popular" to "Football",
+        "/api/matches/basketball/popular" to "Basketball",
+        "/api/matches/baseball/popular" to "Baseball",
+        "/api/matches/tennis/popular" to "Tennis",
+        "/api/matches/fight/popular" to "Fight",
+        "/api/matches/american-football/popular" to "Am. Football",
+        "/api/matches/hockey/popular" to "Hockey",
+        "/api/matches/rugby/popular" to "Rugby",
+        "/api/matches/cricket/popular" to "Cricket",
+        "/api/matches/golf/popular" to "Golf",
+        "/api/matches/motor-sports/popular" to "Motor Sports",
+        "/api/matches/afl/popular" to "AFL",
+        "/api/matches/billiards/popular" to "Billiards",
+        "/api/matches/darts/popular" to "Darts",
+        "/api/matches/other/popular" to "Other",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -59,12 +75,18 @@ class StreamedProvider : MainAPI() {
         }
     }
 
-//    override suspend fun search(query: String): List<SearchResponse> {
-//        val document = app.get("${mainUrl}/?s=$query").document
-//        val results =
-//            document.select("div.container div.card__cover").mapNotNull { it.toSearchResult() }
-//        return results
-//    }
+    override suspend fun search(query: String): List<SearchResponse> {
+        if (query.isBlank()) return emptyList()
+        val sports = app.get("$mainUrl/api/sports").parsed<SportsResult>().map { it.id }
+        val allMatches = sports.amap { sportId ->
+            runCatching {
+                app.get("$mainUrl/api/matches/$sportId/popular").parsed<MatchesResult>()
+            }.getOrDefault(MatchesResult())
+        }.flatten().distinctBy { it.id }
+        return allMatches.filter {
+            it.title.contains(query, ignoreCase = true)
+        }.map { it.toSearchResult() }
+    }
 
     override suspend fun load(url: String): LoadResponse? {
         val info = AppUtils.parseJson<APIMatch>(url)

@@ -4,6 +4,8 @@ val defaultPoster: String = "data:image/webp;base64,UklGRqAXAABXRUJQVlA4WAoAAAAQ
 
 class MatchesResult : ArrayList<APIMatch>()
 class SourceResult : ArrayList<SourceInfo>()
+class SportsResult : ArrayList<Sport>()
+data class Sport(val id: String, val name: String)
 data class APIMatch(
     val id: String,
     val title: String,

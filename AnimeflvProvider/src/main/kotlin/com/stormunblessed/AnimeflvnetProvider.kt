@@ -185,10 +185,11 @@ class AnimeflvnetProvider : MainAPI() {
             ) {
                 val serversRegex = Regex("var videos = (\\{\"SUB\":\\[\\{.*?\\}\\]\\});")
                 val serversplain = serversRegex.find(script.data())?.destructured?.component1() ?: ""
-                val json = parseJson<MainServers>(serversplain)
-                json.sub.amap {
-                    val code = it.code
-                    loadExtractor(code, data, subtitleCallback, callback)
+                if (serversplain.isNotEmpty()) {
+                    val json = parseJson<MainServers>(serversplain)
+                    json.sub.amap {
+                        loadExtractor(it.code, data, subtitleCallback, callback)
+                    }
                 }
             }
         }
