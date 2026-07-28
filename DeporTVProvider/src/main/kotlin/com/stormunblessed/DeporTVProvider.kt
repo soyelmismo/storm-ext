@@ -142,16 +142,6 @@ class DeporTVProvider : MainAPI() {
                 "/agenda.php"
             ),
             Site(
-                SiteKey.FUTBOLLIBRE,
-                "https://futbol-libres.su",
-                "/agenda/"
-            ),
-            Site(
-                SiteKey.TVTVHD,
-                "https://tvhd2.com",
-                "https://pltvhd.com/diaries.json"
-            ),
-            Site(
                 SiteKey.STREAMXX,
                 "https://streamx996.one",
                 "/json/agenda550.json?nocache=${Date().time}",
@@ -161,6 +151,17 @@ class DeporTVProvider : MainAPI() {
                 "https://angulismotv.pages.dev",
                 "https://raw.githubusercontent.com/Aguus467/test/refs/heads/main/json.json",
             ),
+            // Broken sites
+            // Site(
+            //     SiteKey.TVTVHD,
+            //     "https://tvhd2.com",
+            //     "https://pltvhd.com/diaries.json"
+            // ),
+            // Site(
+            //     SiteKey.FUTBOLLIBRE,
+            //     "https://futbol-libres.su",
+            //     "/agenda/"
+            // ),
             // Site(
             //     SiteKey.STREAMTP,
             //     "https://streamtpday1.xyz",
@@ -218,21 +219,22 @@ class DeporTVProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         streamedInfo.init()
         val agendaData = sites.amap {
-            var url = ""
-            if (it.agendaUrl.startsWith("http")) {
-                url = it.agendaUrl
-            } else {
-                val mainUrl = followRedirects(it.mainUrl)
-                url = mainUrl + it.agendaUrl
-            }
-            var res: NiceResponse? = null;
             try {
-                res = app.get(url, timeout = 5, referer = it.mainUrl)
-            } catch (e: Exception) {
-            }
-            var events: List<EventData> = emptyList()
-            if (res != null) {
-                if (it.key.equals(SiteKey.STREAMTP)) {
+                var url = ""
+                if (it.agendaUrl.startsWith("http")) {
+                    url = it.agendaUrl
+                } else {
+                    val mainUrl = followRedirects(it.mainUrl)
+                    url = mainUrl + it.agendaUrl
+                }
+                var res: NiceResponse? = null;
+                try {
+                    res = app.get(url, timeout = 5, referer = it.mainUrl)
+                } catch (e: Exception) {
+                }
+                var events: List<EventData> = emptyList()
+                if (res != null) {
+                    if (it.key.equals(SiteKey.STREAMTP)) {
                     events = AppUtils.tryParseJson<StreamTPResponse>(res.text)?.events
                         ?.flatMap { event ->
                             val title = event.title ?: return@flatMap emptyList()
@@ -315,6 +317,9 @@ class DeporTVProvider : MainAPI() {
                 }
             }
             events
+            } catch (e: Exception) {
+                emptyList<EventData>()
+            }
         }.flatten()
 
         cachedEvents = agendaData
@@ -408,6 +413,7 @@ class DeporTVProvider : MainAPI() {
         if (eventData == null)
             return false
         eventData.urls.amap {
+            try {
             var frame = if (it.contains("?r=")) {
                 base64Decode(
                     it.substringAfter("?r=")
@@ -822,6 +828,8 @@ class DeporTVProvider : MainAPI() {
                     }
                 }
 
+            }
+            } catch (e: Exception) {
             }
 
         }
