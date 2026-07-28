@@ -48,6 +48,7 @@ enum class SiteKey {
     STREAMXX,
     CANALESDEPORTIVOS,
     ANGULISMO,
+    STREAMXHD,
 }
 
 data class PartidoJson(
@@ -125,6 +126,57 @@ data class AngulismoOption(
     val iframe: String?
 )
 
+data class StreamXHDResponse(
+    val updated: String?,
+    val sports: List<StreamXHDSport>?
+)
+
+data class StreamXHDSport(
+    val id: String?,
+    val name: String?,
+    val icon: String?,
+    val leagues: List<StreamXHDLeague>?
+)
+
+data class StreamXHDLeague(
+    val name: String?,
+    val logo: String?,
+    val image: String?,
+    val background: String?,
+    val events: List<StreamXHDEvent>?
+)
+
+data class StreamXHDEvent(
+    val title: String?,
+    val league: String?,
+    val code: String?,
+    val time: String?,
+    val timezone: String?,
+    val image: String?,
+    val logo: String?,
+    val homeTeam: String?,
+    val awayTeam: String?,
+    val homeLogo: String?,
+    val awayLogo: String?,
+    val imageMode: String?,
+    val duration: Int?,
+    val extraTime: Int?,
+    val status: String?,
+    val note: String?,
+    val servers: List<StreamXHDServer>?
+)
+
+data class StreamXHDServer(
+    val name: String?,
+    val url: String?,
+    val type: String?,
+    val quality: String?,
+    val active: Boolean?,
+    val languages: List<String>?,
+    val customLanguages: String?,
+    val channelLogo: String?
+)
+
 class DeporTVProvider : MainAPI() {
     companion object {
         private var cachedEvents: List<EventData> = emptyList()
@@ -150,6 +202,11 @@ class DeporTVProvider : MainAPI() {
                 SiteKey.ANGULISMO,
                 "https://angulismotv.pages.dev",
                 "https://raw.githubusercontent.com/Aguus467/test/refs/heads/main/json.json",
+            ),
+            Site(
+                SiteKey.STREAMXHD,
+                "https://streamx-hd.com",
+                "/eventos.json?v=${Date().time}",
             ),
             // Broken sites
             // Site(
@@ -310,6 +367,26 @@ class DeporTVProvider : MainAPI() {
                                 urls,
                                 matchId.poster ?: evento.logoUrl
                             )
+                        } ?: emptyList()
+                } else if (it.key.equals(SiteKey.STREAMXHD)) {
+                    events = AppUtils.tryParseJson<StreamXHDResponse>(res.text)?.sports
+                        ?.flatMap { sport ->
+                            sport.leagues?.flatMap { league ->
+                                league.events?.map { event ->
+                                    val matchId = streamedInfo.searchPosterByTitle(event.title ?: "")
+                                    val fullTime = event.time?.substringAfter(" ") ?: "00:00"
+                                    val time = if (fullTime.count { it == ':' } > 1) fullTime.substringBeforeLast(":") else fullTime
+                                    val urls = event.servers?.mapNotNull { server ->
+                                        if (server.active == true) server.url else null
+                                    } ?: emptyList()
+                                    EventData(
+                                        matchId.title,
+                                        matchId.hour ?: transformHourToLocal(time, "GMT-5"),
+                                        urls,
+                                        matchId.poster ?: event.homeLogo ?: event.awayLogo
+                                    )
+                                } ?: emptyList()
+                            } ?: emptyList()
                         } ?: emptyList()
                 } else {
                     events = res.document.select(".menu > li")
@@ -536,6 +613,24 @@ class DeporTVProvider : MainAPI() {
                                 "Origin" to "https://${URL(frame).host}",
                                 "Referer" to frame
                             )
+                        }
+                    )
+                }
+            } else if (frame.contains("live1.php?stream=")) {
+                val source = URL(frame).host
+                val name = frame.substringAfter("?stream=")
+                val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
+                val scriptText = doc.select("script").map { it.data() }.joinToString("\n")
+                val playbackUrl = decodeStreamXHDUrl(scriptText)
+                if (!playbackUrl.isNullOrEmpty()) {
+                    callback(
+                        newExtractorLink(
+                            "${source}[$name]",
+                            "${source}[$name]",
+                            playbackUrl,
+                        ) {
+                            this.quality = Qualities.Unknown.value
+                            this.referer = frame
                         }
                     )
                 }
@@ -843,6 +938,34 @@ class DeporTVProvider : MainAPI() {
         val chars = Regex("\"([^\"]*)\"").findAll(arrayStr).map { it.groupValues[1] }.toList()
         val url = chars.joinToString("").replace("\\/", "/")
         return url.takeIf { it.startsWith("http") && it.contains(".m3u8") }
+    }
+
+    private fun decodeStreamXHDUrl(script: String): String? {
+        val arrMatch = Regex("""=\[\[(\d+),"([A-Za-z0-9+/=]+)"\]""").find(script) ?: return null
+        val arrStart = arrMatch.range.first
+        val sectionEnd = listOfNotNull(
+            "adsPayload".let { val i = script.indexOf(it, arrStart); if (i > 0) i else null },
+            "bootAds".let { val i = script.indexOf(it, arrStart); if (i > 0) i else null },
+        ).minOrNull() ?: (arrStart + 15000)
+        val arrSection = script.substring(arrStart, sectionEnd)
+        val entries = Regex("""\[(\d+),"([A-Za-z0-9+/=]+)"\]""").findAll(arrSection)
+            .map {
+                val idx = it.groupValues[1].toInt()
+                val b64 = it.groupValues[2]
+                idx to b64
+            }.toList()
+        if (entries.isEmpty()) return null
+        val sorted = entries.sortedBy { it.first }
+        val keyFns = Regex("""function\s+\w+\s*\(\s*\)\s*\{\s*return\s+(\d+)\s*;?\s*\}""").findAll(script)
+            .map { it.groupValues[1].toInt() }.take(2).toList()
+        if (keyFns.size < 2) return null
+        val k = keyFns[0] + keyFns[1]
+        return sorted.map { (_, b64) ->
+            val decoded = String(android.util.Base64.decode(b64, Base64.DEFAULT))
+            val digits = decoded.filter { it.isDigit() }
+            val num = digits.toIntOrNull() ?: return@map null
+            (num - k).toChar()
+        }.filterNotNull().joinToString("")
     }
 }
 
