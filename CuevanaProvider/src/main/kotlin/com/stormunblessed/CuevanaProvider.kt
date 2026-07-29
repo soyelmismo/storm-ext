@@ -24,29 +24,38 @@ class CuevanaProvider : MainAPI() {
         TvType.TvSeries,
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val items = ArrayList<HomePageList>()
-        val urls = listOf(
-            Pair("$mainUrl/peliculas", "Peliculas actualizadas"),
-            Pair("$mainUrl/peliculas/estrenos", "Peliculas Estrenos"),
-            Pair("$mainUrl/series", "Series actualizadas"),
-            Pair("$mainUrl/series/estrenos", "Series Estrenos"),
-        )
-        urls.map { (url, name) ->
-            val soup = app.get(url).document
-            val home = soup.select("section li.TPostMv").map {
-                val title = it.selectFirst("span.Title")?.text() ?: "Sin titulo"
-                val link = it.selectFirst("a")?.attr("href")?.replace("^/".toRegex(), "$mainUrl/") ?: ""
-                newTvSeriesSearchResponse(title, link, if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries){
-                    this.posterUrl = it.selectFirst("img")?.attr("src")?.replace("^/".toRegex(), "$mainUrl/")
-                }
-            }
+    override val mainPage = mainPageOf(
+        "peliculas" to "Peliculas actualizadas",
+        "peliculas/estrenos" to "Peliculas Estrenos",
+        "series" to "Series actualizadas",
+        "series/estrenos" to "Series Estrenos",
+    )
 
-            items.add(HomePageList(name, home))
+    private fun String?.resolvePoster(): String? {
+        return this?.let {
+            if (it.startsWith("/_next/image?url=")) {
+                val encoded = it.substringAfter("url=").substringBefore("&")
+                try {
+                    java.net.URLDecoder.decode(encoded, "UTF-8")
+                } catch (_: Exception) { it }
+            } else it.replace("^/".toRegex(), "$mainUrl/")
         }
+    }
 
-        if (items.size <= 0) throw ErrorLoadingException()
-        return newHomePageResponse(items)
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val soup = app.get("$mainUrl/${request.data}/page/$page").document
+        val home = soup.select("section li.TPostMv").map {
+            val title = it.selectFirst("span.Title")?.text() ?: "Sin titulo"
+            val link = it.selectFirst("a")?.attr("href")?.replace("^/".toRegex(), "$mainUrl/") ?: ""
+            newTvSeriesSearchResponse(title, link, if (link.contains("/pelicula/")) TvType.Movie else TvType.TvSeries){
+                this.posterUrl = it.selectFirst("img")?.attr("src").resolvePoster()
+            }
+        }
+        if (home.isEmpty()) throw ErrorLoadingException()
+        return newHomePageResponse(
+            list = HomePageList(name = request.name, list = home),
+            hasNext = true
+        )
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
@@ -56,7 +65,7 @@ class CuevanaProvider : MainAPI() {
         return document.select("li.TPostMv").map {
             val title = it.selectFirst("span.Title")!!.text()
             val href = it.selectFirst("a")!!.attr("href").replace("^/".toRegex(), "$mainUrl/")
-            val image = it.selectFirst("img")!!.attr("src").replace("^/".toRegex(), "$mainUrl/")
+            val image = it.selectFirst("img")!!.attr("src").resolvePoster()
             val isSerie = href.contains("/serie/")
 
             if (isSerie) {
@@ -129,19 +138,18 @@ class CuevanaProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val soup = app.get(url, timeout = 120).document
-        val title = soup.selectFirst("h1.Title")!!.text()
+        val title = soup.selectFirst("h1.Title")?.text() ?: return null
         val description = soup.selectFirst(".Description p")?.text()?.trim()
-        val poster: String? = soup.selectFirst("div.backdrop article.TPost div.Image img")!!.attr("src")
-            .replace("^/".toRegex(), "$mainUrl/")
+        val poster: String? = soup.selectFirst("div.backdrop article.TPost div.Image img")?.attr("src").resolvePoster()
         val backgrounposter =
-            soup.selectFirst("div.Image:nth-child(2) img")!!.attr("src").replace("^/".toRegex(), "$mainUrl/")
+            soup.selectFirst("div.Image:nth-child(2) img")?.attr("src").resolvePoster() ?: poster
         val year1 = soup.selectFirst("footer p.meta").toString()
         val yearRegex = Regex("<span>(\\d+)</span>")
         val yearf =
             yearRegex.find(year1)?.destructured?.component1()?.replace(Regex("<span>|</span>"), "")
         val year = if (yearf.isNullOrBlank()) null else yearf.toIntOrNull()
-        val episodes = soup.select("script#__NEXT_DATA__").firstOrNull().let {
-            parseSeriesData(it!!.html())?.props?.pageProps?.thisSerie?.seasons?.flatMap { season ->
+        val episodes = soup.select("script#__NEXT_DATA__").firstOrNull()?.let {
+            parseSeriesData(it.html())?.props?.pageProps?.thisSerie?.seasons?.flatMap { season ->
                 season.episodes.amap {
                     newEpisode(it.url.slug.replace("series/", "$mainUrl/serie/")
                             .replace("seasons/", "temporada/")
@@ -156,19 +164,14 @@ class CuevanaProvider : MainAPI() {
         }.orEmpty()
         val tags = soup.select("ul.InfoList li.AAIco-adjust:contains(Genero) a").map { it.text() }
         val tvType = if (episodes == null || episodes.isEmpty()) TvType.Movie else TvType.TvSeries
-        val recelement =
-            if (tvType == TvType.TvSeries) "main section div.series_listado.series div.xxx"
-            else "main section ul.MovieList li"
         val recommendations =
-            soup.select(recelement).mapNotNull { element ->
-                val recTitle = element.select("h2.Title").text() ?: return@mapNotNull null
-                val image = element.select("figure img")?.attr("data-src")
-                val recUrl = fixUrl(element.select("a").attr("href"))
-                newMovieSearchResponse(
-                    recTitle,
-                    recUrl,
-                    TvType.Movie,
-                ){
+            soup.select("ul.MovieList.Rows li").mapNotNull { element ->
+                if (element.parent()?.hasClass("episodes") == true) return@mapNotNull null
+                val recTitle = element.selectFirst("span.Title")?.text()
+                    ?: element.selectFirst("img")?.attr("alt") ?: return@mapNotNull null
+                val image = element.selectFirst("img")?.attr("src").resolvePoster()
+                val recUrl = fixUrl(element.selectFirst("a")?.attr("href") ?: return@mapNotNull null)
+                newMovieSearchResponse(recTitle, recUrl, TvType.Movie) {
                     this.posterUrl = image
                 }
             }
