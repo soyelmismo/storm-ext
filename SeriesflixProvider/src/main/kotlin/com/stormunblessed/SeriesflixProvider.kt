@@ -7,8 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.Qualities
 
 class SeriesflixProvider : MainAPI() {
     override var mainUrl = "https://seriesflixhd.ink"
@@ -83,6 +85,8 @@ class SeriesflixProvider : MainAPI() {
         val document = app.get(url).document
 
         val title = document.selectFirst("h1.Title")!!.text()
+            .replaceFirst(Regex("^(Seriesflix\\s*\\|?\\s*Ver\\s*|Serie\\s+)"), "")
+            .replaceFirst(Regex("\\s+Online$"), "")
         val descRegex = Regex("(Recuerda.*Seriesflix.)")
         val descipt = document.selectFirst("div.Description > p")!!.text().replace(descRegex, "")
         val year = document.selectFirst("span.Date")?.text()
@@ -170,29 +174,111 @@ class SeriesflixProvider : MainAPI() {
     ): Boolean {
         app.get(data).document.select("li div.Button.sgty").amap {
             val encodedlink = it.attr("data-url")
-            var decodelink = base64Decode(encodedlink)
+            val rawUrl = base64Decode(encodedlink)
             val lang = it.selectFirst("span:not(.nmopt)")?.ownText()?.trim() ?: "Server"
+            val server = it.selectFirst("span:not(.nmopt) > span")?.text()?.trim()?.let {
+                if (it.isNotEmpty()) " - $it" else ""
+            } ?: ""
 
-            if (decodelink.contains("nupload.top")) {
-                val uploadDoc = app.get(decodelink).document
-                val iframeSrc = uploadDoc.selectFirst("iframe")?.attr("src")?.let { src ->
-                    if (src.startsWith("//")) "https:$src" else src
+            if (rawUrl.contains("/watch/")) {
+                try {
+                    val uploadDoc = app.get(rawUrl).document
+                    val html = uploadDoc.select("script").joinToString("") { it.html() }
+
+                    val forEachMatch = Regex("""(\w+)\.forEach\s*\(""").find(html)
+                    val magicMatch = Regex("""parseInt\(.*?replace\(.*?(\d+)""").find(html)
+                    val seszMatch = Regex("""sesz\s*=\s*"([^"]+)""").find(html)
+
+                    if (forEachMatch != null && magicMatch != null && seszMatch != null) {
+                        val arrName = forEachMatch.groupValues[1]
+                        val magic = magicMatch.groupValues[1].toIntOrNull() ?: 0
+                        val sesz = seszMatch.groupValues[1]
+
+                        val arrDef = Regex("""var\s+$arrName\s*=\s*\[([^\]]+)]\s*;""").find(html)
+                        if (arrDef != null && magic > 0) {
+                            val items = Regex("\"([^\"]+)\"").findAll(arrDef.groupValues[1])
+                                .map { it.groupValues[1] }.toList()
+
+                            val urlBase = items.joinToString("") { item ->
+                                try {
+                                    val decoded = base64Decode(item)
+                                    val num = decoded.filter { it.isDigit() }.toIntOrNull()
+                                    if (num != null) (num - magic).toChar().toString() else ""
+                                } catch (_: Exception) { "" }
+                            }
+
+                            if (urlBase.isNotEmpty()) {
+                                var videoUrl = urlBase + "?s=" + sesz
+                                try {
+                                    videoUrl = app.get(videoUrl, headers = mapOf(
+                                        "Origin" to "https://nupload.top",
+                                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                                    )).url
+                                } catch (_: Exception) { }
+                                callback.invoke(newExtractorLink("nupload", "$lang$server", videoUrl) {
+                                    this.type = ExtractorLinkType.M3U8
+                                    this.quality = Qualities.Unknown.value
+                                    this.referer = rawUrl
+                                    this.headers = mapOf(
+                                        "Origin" to "https://nupload.top",
+                                        "Referer" to rawUrl,
+                                    )
+                                })
+                            }
+                        }
+                    }
+                } catch (_: Exception) { }
+            } else if (rawUrl.contains("/iframe/")) {
+                val decodedUrl = try {
+                    java.net.URLDecoder.decode(
+                        rawUrl.substringAfter("url="), "UTF-8"
+                    )
+                } catch (_: Exception) { null }
+                if (decodedUrl?.startsWith("http") == true) {
+                    loadExtractor(decodedUrl, data, subtitleCallback) { link ->
+                        CoroutineScope(Dispatchers.IO).launch {
+                            callback.invoke(newExtractorLink(link.source, "$lang$server - ${link.name}", link.url) {
+                                this.quality = link.quality
+                                this.type = link.type
+                                this.referer = link.referer
+                                this.headers = link.headers
+                            })
+                        }
+                    }
                 }
-                if (iframeSrc != null) decodelink = iframeSrc
-            }
-
-            loadExtractor(decodelink, data, subtitleCallback) { link ->
-                CoroutineScope(Dispatchers.IO).launch {
-                    callback.invoke(newExtractorLink(link.source, "$lang - ${link.name}", link.url) {
-                        this.quality = link.quality
-                        this.type = link.type
-                        this.referer = link.referer
-                        this.headers = link.headers
-                    })
+            } else {
+                val decodelink = fixHostsLinks(rawUrl)
+                if (decodelink.startsWith("http")) {
+                    loadExtractor(decodelink, data, subtitleCallback) { link ->
+                        CoroutineScope(Dispatchers.IO).launch {
+                            callback.invoke(newExtractorLink(link.source, "$lang - ${link.name}", link.url) {
+                                this.quality = link.quality
+                                this.type = link.type
+                                this.referer = link.referer
+                                this.headers = link.headers
+                            })
+                        }
+                    }
                 }
             }
         }
 
         return true
     }
+}
+
+fun fixHostsLinks(url: String): String {
+    return url
+        .replaceFirst("https://hglink.to", "https://streamwish.to")
+        .replaceFirst("https://swdyu.com", "https://streamwish.to")
+        .replaceFirst("https://cybervynx.com", "https://streamwish.to")
+        .replaceFirst("https://dumbalag.com", "https://streamwish.to")
+        .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
+        .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
+        .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
+        .replaceFirst("https://filemoon.link", "https://filemoon.sx")
+        .replaceFirst("https://sblona.com", "https://watchsb.com")
+        .replaceFirst("https://lulu.st", "https://lulustream.com")
+        .replaceFirst("https://uqload.io", "https://uqload.com")
+        .replaceFirst("https://do7go.com", "https://dood.la")
 }
