@@ -34,8 +34,15 @@ class CineHdPlusProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get("$mainUrl/${request.data}/page/$page").document
+        val base = request.data.trimEnd('/')
+        val url = if (base.contains("?")) {
+            "$mainUrl/$base&page=$page"
+        } else {
+            "$mainUrl/$base/page/$page/"
+        }
+        val document = app.get(url).document
         val home = document.select("div.grid a")
+            .filter { it.attr("href").startsWith("/") || it.attr("href").startsWith(mainUrl) }
             .mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
             list = HomePageList(
@@ -59,7 +66,9 @@ class CineHdPlusProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("${mainUrl}/?s=$query").document
         val results =
-            document.select("div.grid div.group").mapNotNull { it.toSearchResult() }
+            document.select("div.grid div.group")
+                .filter { it.selectFirst("a")?.attr("href")?.startsWith("/") == true || it.selectFirst("a")?.attr("href")?.startsWith(mainUrl) == true }
+                .mapNotNull { it.toSearchResult() }
         return results
     }
 
