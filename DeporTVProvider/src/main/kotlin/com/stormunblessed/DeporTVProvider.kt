@@ -43,8 +43,9 @@ enum class SiteKey {
     RUSTICO,
     FUTBOLLIBRE,
     TVTVHD,
-    LA14HD,
-    STREAMTP,
+    LA18HD,
+    STP,
+    STP_OLD,
     STREAMXX,
     CANALESDEPORTIVOS,
     ANGULISMO,
@@ -195,20 +196,31 @@ class DeporTVProvider : MainAPI() {
             ),
             Site(
                 SiteKey.STREAMXX,
-                "https://streamx996.one",
+                "https://streamx996.one", // https://streamx488.sbs
                 "/json/agenda550.json?nocache=${Date().time}",
-            ),
-            Site(
-                SiteKey.ANGULISMO,
-                "https://angulismotv.pages.dev",
-                "https://raw.githubusercontent.com/Aguus467/test/refs/heads/main/json.json",
             ),
             Site(
                 SiteKey.STREAMXHD,
                 "https://streamx-hd.com",
                 "/eventos.json?v=${Date().time}",
             ),
-            // Broken sites
+            Site(
+                SiteKey.STP,
+                "https://streamtp99a.sbs",
+                "/eventos.json?nocache=${Date().time}"
+            ),
+            Site(
+                SiteKey.LA18HD,
+                "https://la18hd.su",
+                "/eventos/json/agenda123.json"
+            ),
+            // BROKEN SITES
+            // TODO: fix old events
+            // Site(
+            //     SiteKey.ANGULISMO,
+            //     "https://angulismotv.pages.dev",
+            //     "https://raw.githubusercontent.com/Aguus467/test/refs/heads/main/json.json",
+            // ),
             // Site(
             //     SiteKey.TVTVHD,
             //     "https://tvhd2.com",
@@ -220,7 +232,7 @@ class DeporTVProvider : MainAPI() {
             //     "/agenda/"
             // ),
             // Site(
-            //     SiteKey.STREAMTP,
+            //     SiteKey.STP_OLD,
             //     "https://streamtpday1.xyz",
             //     "/wc.json?_=${Date().time}"
             // ),
@@ -228,11 +240,6 @@ class DeporTVProvider : MainAPI() {
             //     SiteKey.CANALESDEPORTIVOS,
             //     "https://canalesdeportivos.net",
             //     "https://canalesdeportivos.net/partidos.json?v=${Date().time}"
-            // ),
-            // Site(
-            //     SiteKey.LA14HD,
-            //     "https://la14hd.com",
-            //     "/eventos/json/agenda123.json"
             // ),
         )
     override var name = "DeporTV"
@@ -291,7 +298,7 @@ class DeporTVProvider : MainAPI() {
                 }
                 var events: List<EventData> = emptyList()
                 if (res != null) {
-                    if (it.key.equals(SiteKey.STREAMTP)) {
+                    if (it.key.equals(SiteKey.STP_OLD)) {
                     events = AppUtils.tryParseJson<StreamTPResponse>(res.text)?.events
                         ?.flatMap { event ->
                             val title = event.title ?: return@flatMap emptyList()
@@ -307,8 +314,9 @@ class DeporTVProvider : MainAPI() {
                                 )
                             )
                         } ?: emptyList()
-                } else if (it.key.equals(SiteKey.LA14HD)
+                } else if (it.key.equals(SiteKey.LA18HD)
                     || it.key.equals(SiteKey.STREAMXX)
+                    || it.key.equals(SiteKey.STP)
                 ) {
                     events = AppUtils.tryParseJson<List<La14HDMatchInfo>>(res.text)
                         ?.map {
