@@ -33,6 +33,9 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import java.util.Calendar
 import java.util.Collections
 
@@ -121,8 +124,121 @@ class NetflixCatalogoLatamProvider : MainAPI() {
         return Regex("""[^a-zA-Z0-9-]""").replace(name, "")
     }
 
+    // Many providers append a year to the displayed title (e.g. "Deseo (2026)").
+    // Strip a trailing year before comparing so those names still match.
+    private fun comparableName(name: String): String {
+        return filterName(Regex("""\s*\(?\d{4}\)?\s*$""").replace(name, ""))
+    }
+
     private val validApis
         get() = apis.filter { it.lang == this.lang && it::class != this::class }
+
+    // Resolving a title searches the other installed providers. Searching ALL of
+    // them at once is what makes load() slow when many providers are installed
+    // (CloudStream also calls load() for the home page preview row, so a slow
+    // load() stalls the whole main page). Providers are searched in small
+    // batches and we stop early once enough matches are found; every outcome is
+    // cached per title so a repeat load() is instant.
+    private val providerBatchSize = 2
+    private val minMatchesForFallback = 2
+    private val providerSearchTimeoutMs = 10_000L
+
+    // Short-lived cache for TMDB responses so that reloading the home page
+    // (CloudStream refetches every section at once) is instant instead of
+    // hammering TMDB with ~36 parallel requests.
+    private val tmdbCacheMs = 15L * 60 * 1000
+    private data class TmdbCacheEntry(val timestamp: Long, val body: String)
+    private val tmdbCache = Collections.synchronizedMap(HashMap<String, TmdbCacheEntry>())
+
+    // Short-lived cache for the provider-search outcome per title, so the search
+    // is only paid for the first time a title is opened (a second open of the
+    // same title, e.g. from another row or after the app's own load cache
+    // evicts it, returns instantly).
+    private val searchCacheMs = 10L * 60 * 1000
+    private data class SearchCacheEntry(val timestamp: Long, val matches: List<SearchMatch>)
+    private val searchCache = Collections.synchronizedMap(HashMap<String, SearchCacheEntry>())
+
+    private class SearchMatch(val providerName: String, val loaded: LoadResponse)
+
+    // A match must be of the same media type (movie vs series) as the item
+    // being loaded, otherwise a same-named movie could be returned for a
+    // series and vice versa.
+    private fun SearchResponse.typeOk(isTv: Boolean): Boolean {
+        val t = this.type
+        return if (isTv) {
+            t?.let { it != TvType.Movie && it != TvType.AnimeMovie } ?: (this is TvSeriesSearchResponse)
+        } else {
+            t?.let { it == TvType.Movie || it == TvType.AnimeMovie } ?: (this is MovieSearchResponse)
+        }
+    }
+
+    private fun SearchResponse.yearOk(searchYear: Int?): Boolean {
+        val y = when (this) {
+            is MovieSearchResponse -> this.year
+            is TvSeriesSearchResponse -> this.year
+            else -> null
+        } ?: return true
+        return searchYear == null || y == searchYear
+    }
+
+    private suspend fun searchProvider(
+        api: MainAPI,
+        title: String,
+        matchName: String,
+        searchYear: Int?,
+        isTv: Boolean,
+    ): SearchMatch? {
+        return try {
+            withTimeout(providerSearchTimeoutMs) {
+                val searchResult = api.search(title, 1) ?: return@withTimeout null
+                val candidates = searchResult.items.filter { it.typeOk(isTv) }
+                if (candidates.isEmpty()) return@withTimeout null
+
+                // Prefer an exact title + year match; otherwise fall back to a
+                // same-title match, since many providers report a different or no
+                // year for the same movie (e.g. new releases, regional titles).
+                val matched = candidates.firstOrNull {
+                    comparableName(it.name).equals(matchName, ignoreCase = true) && it.yearOk(searchYear)
+                } ?: candidates.firstOrNull {
+                    comparableName(it.name).equals(matchName, ignoreCase = true)
+                } ?: return@withTimeout null
+
+                val loaded = api.load(matched.url) ?: return@withTimeout null
+                SearchMatch(api.name, loaded)
+            }
+        } catch (e: TimeoutCancellationException) {
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logError(e)
+            null
+        }
+    }
+
+    private suspend fun findMatches(
+        title: String,
+        matchName: String,
+        searchYear: Int?,
+        isTv: Boolean,
+    ): List<SearchMatch> {
+        val key = "$isTv|$matchName|$searchYear"
+        val now = System.currentTimeMillis()
+        searchCache[key]?.let { if (now - it.timestamp < searchCacheMs) return it.matches }
+
+        val matches = mutableListOf<SearchMatch>()
+        for (batch in validApis.chunked(providerBatchSize)) {
+            batch.amap { api ->
+                searchProvider(api, title, matchName, searchYear, isTv)
+            }.filterNotNull().forEach { matches.add(it) }
+            if (matches.size >= minMatchesForFallback) break
+        }
+        searchCache[key] = SearchCacheEntry(now, matches)
+        if (searchCache.size > 250) {
+            searchCache.clear()
+        }
+        return matches
+    }
 
     private val apiKey = "e6333b32409e02a4a6eba6fb7ff866bb"
     private val apiBase = "https://api.themoviedb.org/3"
@@ -271,46 +387,13 @@ class NetflixCatalogoLatamProvider : MainAPI() {
         val score = Score.from10(details.voteAverage)
         val tags = details.genres?.mapNotNull { it.name }
 
-        // Search other providers for this title
+        // Search other providers for this title. Only a capped number of
+        // providers is hit (in small batches) so that load() stays fast even
+        // when many providers are installed — CloudStream calls load() for the
+        // home page preview row, so a slow load() stalls the main page.
         val matchName = filterName(title)
         val searchYear = year
-
-        data class SearchMatch(val providerName: String, val loaded: LoadResponse)
-
-        // A match must be of the same media type (movie vs series) as the item
-        // being loaded, otherwise a same-named movie could be returned for a
-        // series and vice versa.
-        fun SearchResponse.typeOk(): Boolean {
-            val t = this.type
-            return if (data.isTv) {
-                t?.let { it != TvType.Movie && it != TvType.AnimeMovie } ?: (this is TvSeriesSearchResponse)
-            } else {
-                t?.let { it == TvType.Movie || it == TvType.AnimeMovie } ?: (this is MovieSearchResponse)
-            }
-        }
-
-        fun SearchResponse.yearOk(): Boolean {
-            val y = when (this) {
-                is MovieSearchResponse -> this.year
-                is TvSeriesSearchResponse -> this.year
-                else -> null
-            } ?: return true
-            return searchYear == null || y == searchYear
-        }
-
-        val matches = validApis.amap { api ->
-            try {
-                val searchResult = api.search(title, 1) ?: return@amap null
-                val matched = searchResult.items.firstOrNull {
-                    it.typeOk() && filterName(it.name).equals(matchName, ignoreCase = true) && it.yearOk()
-                } ?: return@amap null
-                val loaded = api.load(matched.url) ?: return@amap null
-                SearchMatch(api.name, loaded)
-            } catch (e: Exception) {
-                logError(e)
-                null
-            }
-        }.filterNotNull()
+        val matches = findMatches(title, matchName, searchYear, data.isTv)
 
         if (matches.isEmpty()) {
             return if (data.isTv) {
@@ -436,7 +519,11 @@ class NetflixCatalogoLatamProvider : MainAPI() {
     }
 
     private suspend fun tmdbGet(path: String, params: Map<String, String> = emptyMap()): String {
-        return app.get(
+        val key = "$path${params.toSortedMap()}"
+        val now = System.currentTimeMillis()
+        tmdbCache[key]?.let { if (now - it.timestamp < tmdbCacheMs) return it.body }
+
+        val body = app.get(
             url = "$apiBase$path",
             params = buildMap {
                 put("api_key", apiKey)
@@ -444,6 +531,8 @@ class NetflixCatalogoLatamProvider : MainAPI() {
                 putAll(params)
             },
         ).text
+        tmdbCache[key] = TmdbCacheEntry(now, body)
+        return body
     }
 
     private suspend fun discoverMovies(
