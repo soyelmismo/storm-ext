@@ -36,20 +36,14 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import java.util.Calendar
 import java.util.Collections
 
-/**
- * Serialized data stored in each [SearchResponse] of the provider.
- * The title is the localized one (es-MX), which is the term used by the
- * top-bar search button (QuickSearch) to look for sources across the rest
- * of the installed providers.
- */
-data class CatalogoData(
+data class NetflixLatamData(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("isTv") val isTv: Boolean = false,
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("year") val year: Int? = null,
 )
 
-data class TmdbCatalogoResult(
+data class TmdbNetflixResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("original_title") val originalTitle: String? = null,
@@ -67,11 +61,11 @@ data class TmdbCatalogoResult(
     val year get() = (releaseDate ?: firstAirDate)?.take(4)?.toIntOrNull()
 }
 
-data class TmdbCatalogoPageResult(
-    @JsonProperty("results") val results: List<TmdbCatalogoResult>? = null,
+data class TmdbNetflixPageResult(
+    @JsonProperty("results") val results: List<TmdbNetflixResult>? = null,
 )
 
-data class TmdbCatalogoDetails(
+data class TmdbNetflixDetails(
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("original_title") val originalTitle: String? = null,
     @JsonProperty("name") val name: String? = null,
@@ -83,44 +77,43 @@ data class TmdbCatalogoDetails(
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
     @JsonProperty("runtime") val runtime: Int? = null,
-    @JsonProperty("genres") val genres: List<TmdbCatalogoGenre>? = null,
+    @JsonProperty("genres") val genres: List<TmdbNetflixGenre>? = null,
 ) {
     val displayTitle get() = title ?: name ?: originalTitle ?: originalName ?: ""
     val year get() = (releaseDate ?: firstAirDate)?.take(4)?.toIntOrNull()
 }
 
-data class TmdbCatalogoGenre(
+data class TmdbNetflixGenre(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("name") val name: String? = null,
 )
 
-data class CrossMetaData(
+data class NetflixCrossMetaData(
     @JsonProperty("isSuccess") val isSuccess: Boolean,
-    @JsonProperty("sources") val sources: List<CrossSource>? = null,
+    @JsonProperty("sources") val sources: List<NetflixCrossSource>? = null,
 )
 
-data class CrossSource(
+data class NetflixCrossSource(
     @JsonProperty("apiName") val apiName: String,
     @JsonProperty("dataUrl") val dataUrl: String,
 )
 
 /**
- * Catalogo Infantil: meta provider for discovering children's and family
- * content (Mexican AA classification). On load, it searches other installed
- * providers (same language) for the title and, if found, delegates playback
- * to them. Movies get a Play button via CrossMetaData; TV series get the
- * matched provider's episodes list. If no match is found, the detail shows
- * metadata only (comingSoon) with a search button via QuickSearch.
+ * Netflix LATAM: meta provider for discovering Netflix content available in
+ * Mexico/LATAM in Spanish. On load, it searches other installed providers
+ * (same language) for the title and, if found, delegates playback to them.
+ * Movies get a Play button via CrossMetaData; TV series get the matched
+ * provider's episodes list. If no match is found, the detail shows metadata
+ * only (comingSoon) with a search button via QuickSearch.
  */
-class CatalogoInfantilProvider : MainAPI() {
-    override var name = "Catálogo Infantil"
+class NetflixCatalogoLatamProvider : MainAPI() {
+    override var name = "Netflix LATAM"
     override var mainUrl = "https://www.themoviedb.org"
     override var lang = "mx"
     override val providerType = ProviderType.MetaProvider
     override val supportedTypes = setOf(
         TvType.Movie,
         TvType.TvSeries,
-        TvType.Cartoon,
     )
     override val hasMainPage = true
 
@@ -134,59 +127,51 @@ class CatalogoInfantilProvider : MainAPI() {
     private val apiKey = "e6333b32409e02a4a6eba6fb7ff866bb"
     private val apiBase = "https://api.themoviedb.org/3"
 
-    // Only the Mexican AA classification (under 7 years old): the exact
-    // `certification` filter avoids titles without a registered MX certification
-    // and, by not including "A", excludes non-kids content that does have it
-    // (e.g. La Momia, Friends, Jesus 1979).
-    private val kidsCertifications = listOf("AA")
-    private val certificationCountry = "MX"
+    // Netflix provider ID on TMDB, Mexico watch region
+    private val netflixProviderId = "8"
+    private val watchRegion = "MX"
 
-    // Kids genres for series: Family, Kids and Animation.
-    // Comma (,) in TMDB's with_genres means AND: it works for series, where
-    // almost all kids content combines the three genres.
-    private val tvKidsGenres = "10751,10762,16"
+    // Netflix network ID for originals
+    private val netflixNetworkId = "213"
 
-    // For movies pipe (|) = OR is used: almost no movie has all three genres at
-    // once (AND returns 0 results). OR + AA discards non-kids AA titles
-    // (e.g. documentaries, dramas, concerts).
-    private val movieKidsGenres = "10751|10762|16"
+    // Minimum votes to filter junk
+    private val minVotes = 50
 
-    // Minimum votes for movies: discards AA titles with 0-1 votes that are junk
-    // or unknown regional releases (e.g. "Maruchan con Huevo").
-    // Real kids content (Toy Story, Inside Out) accumulates thousands of votes.
-    private val movieMinVotes = 10
-
-    // Per-genre section configuration: the sort order is diversified so that
-    // each row shows different content instead of repeating the same popularity.
+    // Per-genre section configuration
     private data class GenreSection(val id: Int, val sortBy: String, val minVotes: Boolean)
 
     private val genreSections = mapOf(
+        "accion" to GenreSection(28, "popularity.desc", false),
+        "drama" to GenreSection(18, "vote_average.desc", true),
+        "comedia" to GenreSection(35, "popularity.desc", false),
+        "thriller" to GenreSection(53, "vote_average.desc", true),
+        "misterio" to GenreSection(9648, "vote_average.desc", true),
+        "scifi" to GenreSection(878, "popularity.desc", false),
+        "fantasia" to GenreSection(14, "popularity.desc", false),
+        "horror" to GenreSection(27, "popularity.desc", false),
+        "documental" to GenreSection(99, "popularity.desc", false),
         "animacion" to GenreSection(16, "popularity.desc", false),
-        "familia" to GenreSection(10751, "vote_average.desc", true),
-        "ninos" to GenreSection(10762, "primary_release_date.desc", false),
         "aventura" to GenreSection(12, "popularity.desc", false),
-        "fantasia" to GenreSection(14, "vote_average.desc", true),
-        "comedia" to GenreSection(35, "primary_release_date.desc", false),
+        "romance" to GenreSection(10749, "vote_average.desc", true),
     )
 
-    // Deduplication across main page sections: titles already shown are not
-    // repeated in the following rows. It resets after a time window.
+    // Deduplication across main page sections
     private val minSectionResults = 12
     private val seenWindowMs = 30L * 60 * 1000
     private val seenMainPageKeys = Collections.synchronizedSet(mutableSetOf<String>())
     private var seenWindowStart = System.currentTimeMillis()
 
-    private fun mainPageKey(result: TmdbCatalogoResult): String =
+    private fun mainPageKey(result: TmdbNetflixResult): String =
         "${result.isTv}-${result.id ?: result.displayTitle}"
 
-    private fun dedupeMainPage(raw: List<TmdbCatalogoResult>): List<TmdbCatalogoResult> {
+    private fun dedupeMainPage(raw: List<TmdbNetflixResult>): List<TmdbNetflixResult> {
         val now = System.currentTimeMillis()
         if (now - seenWindowStart > seenWindowMs) {
             seenMainPageKeys.clear()
             seenWindowStart = now
         }
-        val fresh = mutableListOf<TmdbCatalogoResult>()
-        val repeats = mutableListOf<TmdbCatalogoResult>()
+        val fresh = mutableListOf<TmdbNetflixResult>()
+        val repeats = mutableListOf<TmdbNetflixResult>()
         for (result in raw) {
             if (mainPageKey(result) in seenMainPageKeys) {
                 repeats.add(result)
@@ -195,51 +180,53 @@ class CatalogoInfantilProvider : MainAPI() {
                 fresh.add(result)
             }
         }
-        // never leave a row almost empty: gaps are filled with repeats
         val fill = (minSectionResults - fresh.size).coerceAtLeast(0)
         return fresh + repeats.take(fill)
     }
 
     override val mainPage = listOf(
-        mainPage("recomendados", "Recomendados", true),
-        mainPage("peliculas", "Películas Populares", true),
-        mainPage("series", "Series Populares", true),
-        mainPage("tendencias", "Tendencias", true),
-        mainPage("estrenos", "Estrenos", false),
-        mainPage("mejor", "Mejor Calificadas", false),
-        mainPage("animacion", "Animación", true),
-        mainPage("familia", "Familia", true),
-        mainPage("ninos", "Niños", true),
-        mainPage("aventura", "Aventura", true),
-        mainPage("fantasia", "Fantasía", true),
-        mainPage("comedia", "Comedia", true),
+        mainPage("popular", "Netflix Popular", false),
+        mainPage("top", "Mejor Calificadas", false),
+        mainPage("nuevos", "Estrenos", false),
+        mainPage("originales", "Netflix Originales", false),
+        mainPage("kdrama", "K-Drama", false),
+        mainPage("anime", "Anime", false),
+        mainPage("accion", "Acción", false),
+        mainPage("drama", "Drama", false),
+        mainPage("comedia", "Comedia", false),
+        mainPage("thriller", "Thriller", false),
+        mainPage("misterio", "Misterio", false),
+        mainPage("scifi", "Ciencia Ficción", false),
+        mainPage("fantasia", "Fantasía", false),
+        mainPage("horror", "Horror", false),
+        mainPage("documental", "Documentales", false),
+        mainPage("animacion", "Animación", false),
+        mainPage("aventura", "Aventura", false),
+        mainPage("romance", "Romance", false),
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Cards are always horizontal with a landscape (backdrop) image.
-        val horizontal = true
+        val horizontal = false
 
         val raw = when (request.data) {
-            "recomendados" ->
+            "popular" ->
                 discoverMovies(page, "popularity.desc") +
-                        discoverSeries(page, "popularity.desc")
+                    discoverSeries(page, "popularity.desc")
 
-            "peliculas" -> discoverMovies(page, "vote_average.desc", minVotes = true)
-            "series" -> discoverSeries(page, "vote_average.desc", minVotes = true)
+            "top" ->
+                discoverMovies(page, "vote_average.desc", minVotes = true) +
+                    discoverSeries(page, "vote_average.desc", minVotes = true)
 
-            "tendencias" ->
-                discoverMovies(page, "popularity.desc", recent = true) +
-                        discoverSeries(page, "popularity.desc", recent = true)
+            "nuevos" ->
+                discoverMovies(page, "primary_release_date.desc", recent = true) +
+                    discoverSeries(page, "first_air_date.desc", recent = true)
 
-            "estrenos" ->
-                discoverMovies(page, "primary_release_date.desc") +
-                        discoverSeries(page, "first_air_date.desc")
+            "originales" ->
+                discoverSeries(page, "popularity.desc", originals = true)
 
-            "mejor" ->
-                discoverMovies(page, "popularity.desc") +
-                        discoverSeries(page, "popularity.desc")
-
-            "animacion", "familia", "ninos", "aventura", "fantasia", "comedia" -> {
+            "accion", "drama", "comedia", "thriller", "misterio",
+            "scifi", "fantasia", "horror", "documental", "animacion",
+            "aventura", "romance" -> {
                 val config = genreSections[request.data] ?: return newHomePageResponse(
                     HomePageList(request.name, emptyList(), true),
                     hasNext = false
@@ -247,10 +234,14 @@ class CatalogoInfantilProvider : MainAPI() {
                 genreMovies(page, config) + genreSeries(page, config)
             }
 
+            "kdrama" -> discoverKoreanSeries(page, "popularity.desc")
+
+            "anime" -> discoverAnime(page, "popularity.desc")
+
             else -> emptyList()
         }
 
-        val results = dedupeMainPage(raw).mapNotNull { it.toCatalogoSearchResponse(horizontal) }
+        val results = dedupeMainPage(raw).mapNotNull { it.toNetflixSearchResponse(horizontal) }
 
         return newHomePageResponse(
             HomePageList(request.name, results, horizontal),
@@ -258,21 +249,18 @@ class CatalogoInfantilProvider : MainAPI() {
         )
     }
 
-    // The provider's own search is deliberately disabled:
-    // the catalog only discovers content on the main page. The source search is
-    // done from the detail with the magnifier (the app's QuickSearch).
     override suspend fun search(query: String, page: Int): SearchResponseList? {
         return null
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val data = tryParseJson<CatalogoData>(url) ?: return null
+        val data = tryParseJson<NetflixLatamData>(url) ?: return null
         val id = data.id ?: return null
 
         val details = if (data.isTv) {
-            parseJson<TmdbCatalogoDetails>(tmdbGet("/tv/$id"))
+            parseJson<TmdbNetflixDetails>(tmdbGet("/tv/$id"))
         } else {
-            parseJson<TmdbCatalogoDetails>(tmdbGet("/movie/$id"))
+            parseJson<TmdbNetflixDetails>(tmdbGet("/movie/$id"))
         }
 
         val title = details.displayTitle.takeIf { it.isNotBlank() } ?: return null
@@ -283,7 +271,7 @@ class CatalogoInfantilProvider : MainAPI() {
         val score = Score.from10(details.voteAverage)
         val tags = details.genres?.mapNotNull { it.name }
 
-        // Search other providers for this title and collect playable data
+        // Search other providers for this title
         val matchName = filterName(title)
         val searchYear = year
 
@@ -295,8 +283,8 @@ class CatalogoInfantilProvider : MainAPI() {
                 val matched = searchResult.items.firstOrNull {
                     filterName(it.name).equals(matchName, ignoreCase = true)
                             && (it as? MovieSearchResponse)?.year?.let { y -> searchYear == null || y == searchYear }
-                            ?: (it as? TvSeriesSearchResponse)?.year?.let { y -> searchYear == null || y == searchYear }
-                            ?: true
+                        ?: (it as? TvSeriesSearchResponse)?.year?.let { y -> searchYear == null || y == searchYear }
+                        ?: true
                 } ?: return@amap null
                 val loaded = api.load(matched.url) ?: return@amap null
                 SearchMatch(api.name, loaded)
@@ -307,7 +295,6 @@ class CatalogoInfantilProvider : MainAPI() {
         }.filterNotNull()
 
         if (matches.isEmpty()) {
-            // No match found in other providers: return metadata-only (comingSoon)
             return if (data.isTv) {
                 newTvSeriesLoadResponse(title, url, type, episodes = emptyList()) {
                     this.posterUrl = poster
@@ -330,16 +317,14 @@ class CatalogoInfantilProvider : MainAPI() {
             }
         }
 
-        // Use the FIRST matched provider's response, overlay TMDB metadata
         val first = matches.first()
 
         return when (val loaded = first.loaded) {
             is MovieLoadResponse -> {
-                // Store all matches in CrossMetaData for loadLinks delegation
                 val movieMatches = matches.filter { it.loaded is MovieLoadResponse }
-                val crossData = CrossMetaData(
+                val crossData = NetflixCrossMetaData(
                     true,
-                    movieMatches.map { CrossSource(it.providerName, (it.loaded as MovieLoadResponse).dataUrl) }
+                    movieMatches.map { NetflixCrossSource(it.providerName, (it.loaded as MovieLoadResponse).dataUrl) }
                 ).toJson()
                 newMovieLoadResponse(title, url, type, dataUrl = crossData) {
                     this.posterUrl = poster
@@ -353,11 +338,9 @@ class CatalogoInfantilProvider : MainAPI() {
             }
 
             is TvSeriesLoadResponse -> {
-                // Use episodes from the matched provider, but wrap each episode's
-                // data so loadLinks can identify the source provider and delegate.
                 val providerName = first.providerName
                 val wrappedEpisodes = loaded.episodes.map { ep ->
-                    val wrapped = CrossSource(providerName, ep.data).toJson()
+                    val wrapped = NetflixCrossSource(providerName, ep.data).toJson()
                     @Suppress("DEPRECATION_ERROR")
                     Episode(
                         data = wrapped,
@@ -391,8 +374,7 @@ class CatalogoInfantilProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Try CrossMetaData first (movies — contains list of sources)
-        tryParseJson<CrossMetaData>(data)?.let { metaData ->
+        tryParseJson<NetflixCrossMetaData>(data)?.let { metaData ->
             if (!metaData.isSuccess) return false
             metaData.sources?.amap { source ->
                 getApiFromNameNull(source.apiName)?.let {
@@ -405,8 +387,7 @@ class CatalogoInfantilProvider : MainAPI() {
             }
             return true
         }
-        // Try CrossSource (TV episodes — single source wrapping episode data)
-        tryParseJson<CrossSource>(data)?.let { source ->
+        tryParseJson<NetflixCrossSource>(data)?.let { source ->
             getApiFromNameNull(source.apiName)?.let {
                 try {
                     it.loadLinks(source.dataUrl, isCasting, subtitleCallback, callback)
@@ -435,23 +416,21 @@ class CatalogoInfantilProvider : MainAPI() {
         sortBy: String,
         recent: Boolean = false,
         minVotes: Boolean = false,
-    ): List<TmdbCatalogoResult> {
-        return kidsCertifications.flatMap { cert ->
-            parseJson<TmdbCatalogoPageResult>(
-                tmdbGet(
-                    "/discover/movie",
-                    buildMap {
-                        put("page", "$page")
-                        put("sort_by", sortBy)
-                        put("with_genres", movieKidsGenres)
-                        put("certification_country", certificationCountry)
-                        put("certification", cert)
-                        if (recent) put("primary_release_date.gte", "${currentYear()}-01-01")
-                        put("vote_count.gte", if (minVotes) "150" else "$movieMinVotes")
-                    }
-                )
-            ).results ?: emptyList()
-        }
+        originals: Boolean = false,
+    ): List<TmdbNetflixResult> {
+        return parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/discover/movie",
+                buildMap {
+                    put("page", "$page")
+                    put("sort_by", sortBy)
+                    put("with_watch_providers", netflixProviderId)
+                    put("watch_region", watchRegion)
+                    if (recent) put("primary_release_date.gte", "${currentYear()}-01-01")
+                    put("vote_count.gte", if (minVotes) "200" else "$minVotes")
+                }
+            )
+        ).results ?: emptyList()
     }
 
     private suspend fun discoverSeries(
@@ -459,80 +438,104 @@ class CatalogoInfantilProvider : MainAPI() {
         sortBy: String,
         recent: Boolean = false,
         minVotes: Boolean = false,
-    ): List<TmdbCatalogoResult> {
-        return kidsCertifications.flatMap { cert ->
-            parseJson<TmdbCatalogoPageResult>(
-                tmdbGet(
-                    "/discover/tv",
-                    buildMap {
-                        put("page", "$page")
-                        put("sort_by", sortBy)
-                        put("with_genres", tvKidsGenres)
-                        put("certification_country", certificationCountry)
-                        put("certification", cert)
-                        if (recent) put("first_air_date.gte", "${currentYear()}-01-01")
-                        if (minVotes) put("vote_count.gte", "100")
-                    }
-                )
-            ).results ?: emptyList()
-        }
+        originals: Boolean = false,
+    ): List<TmdbNetflixResult> {
+        return parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/discover/tv",
+                buildMap {
+                    put("page", "$page")
+                    put("sort_by", sortBy)
+                    put("with_watch_providers", netflixProviderId)
+                    put("watch_region", watchRegion)
+                    if (originals) put("with_networks", netflixNetworkId)
+                    if (recent) put("first_air_date.gte", "${currentYear()}-01-01")
+                    put("vote_count.gte", if (minVotes) "100" else "20")
+                }
+            )
+        ).results ?: emptyList()
     }
 
-    private suspend fun genreMovies(page: Int, config: GenreSection): List<TmdbCatalogoResult> {
-        return kidsCertifications.flatMap { cert ->
-            parseJson<TmdbCatalogoPageResult>(
-                tmdbGet(
-                    "/discover/movie",
-                    buildMap {
-                        put("page", "$page")
-                        put("sort_by", config.sortBy)
-                        put("with_genres", "${config.id}")
-                        put("certification_country", certificationCountry)
-                        put("certification", cert)
-                        put("vote_count.gte", if (config.minVotes) "150" else "$movieMinVotes")
-                    }
-                )
-            ).results ?: emptyList()
-        }
+    private suspend fun discoverKoreanSeries(
+        page: Int,
+        sortBy: String,
+    ): List<TmdbNetflixResult> {
+        return parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/discover/tv",
+                buildMap {
+                    put("page", "$page")
+                    put("sort_by", sortBy)
+                    put("with_watch_providers", netflixProviderId)
+                    put("watch_region", watchRegion)
+                    put("with_original_language", "ko")
+                    put("vote_count.gte", "20")
+                }
+            )
+        ).results ?: emptyList()
     }
 
-    private suspend fun genreSeries(page: Int, config: GenreSection): List<TmdbCatalogoResult> {
-        return kidsCertifications.flatMap { cert ->
-            parseJson<TmdbCatalogoPageResult>(
-                tmdbGet(
-                    "/discover/tv",
-                    buildMap {
-                        put("page", "$page")
-                        put("sort_by", config.sortBy)
-                        // TMDB's certification filter does not apply to TV, so the
-                        // section requires the row genre PLUS the kids genres (AND)
-                        // to exclude unsuitable sitcoms (e.g. Friends, Two and a
-                        // Half Men).
-                        put("with_genres", "${config.id},10751,10762,16")
-                        put("certification_country", certificationCountry)
-                        put("certification", cert)
-                        if (config.minVotes) put("vote_count.gte", "100")
-                    }
-                )
-            ).results ?: emptyList()
-        }
+    private suspend fun discoverAnime(
+        page: Int,
+        sortBy: String,
+    ): List<TmdbNetflixResult> {
+        return parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/discover/tv",
+                buildMap {
+                    put("page", "$page")
+                    put("sort_by", sortBy)
+                    put("with_watch_providers", netflixProviderId)
+                    put("watch_region", watchRegion)
+                    put("with_genres", "16")
+                    put("with_original_language", "ja")
+                    put("vote_count.gte", "20")
+                }
+            )
+        ).results ?: emptyList()
     }
 
-    private fun TmdbCatalogoResult.toCatalogoSearchResponse(
+    private suspend fun genreMovies(page: Int, config: GenreSection): List<TmdbNetflixResult> {
+        return parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/discover/movie",
+                buildMap {
+                    put("page", "$page")
+                    put("sort_by", config.sortBy)
+                    put("with_genres", "${config.id}")
+                    put("with_watch_providers", netflixProviderId)
+                    put("watch_region", watchRegion)
+                    put("vote_count.gte", if (config.minVotes) "200" else "$minVotes")
+                }
+            )
+        ).results ?: emptyList()
+    }
+
+    private suspend fun genreSeries(page: Int, config: GenreSection): List<TmdbNetflixResult> {
+        return parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/discover/tv",
+                buildMap {
+                    put("page", "$page")
+                    put("sort_by", config.sortBy)
+                    put("with_genres", "${config.id}")
+                    put("with_watch_providers", netflixProviderId)
+                    put("watch_region", watchRegion)
+                    put("vote_count.gte", if (config.minVotes) "100" else "20")
+                }
+            )
+        ).results ?: emptyList()
+    }
+
+    private fun TmdbNetflixResult.toNetflixSearchResponse(
         preferLandscape: Boolean = false
     ): SearchResponse? {
         val display = displayTitle
         if (display.isBlank()) return null
         val id = this.id ?: return null
 
-        // The card name is the localized title (es-MX): avoids showing titles in
-        // their original language (e.g. anime in Japanese/Chinese) on the main page
-        // and matches what the detail shows. It is also the term used by
-        // QuickSearch in the installed mx/es providers.
-        val data = CatalogoData(id, isTv, display, year).toJson()
+        val data = NetflixLatamData(id, isTv, display, year).toJson()
 
-        // Horizontal rows prefer the landscape (backdrop) image when available;
-        // otherwise the vertical poster is kept.
         val poster = if (preferLandscape) {
             getImageUrl(backdropPath ?: posterPath, "w780")
         } else {
@@ -542,13 +545,13 @@ class CatalogoInfantilProvider : MainAPI() {
         return if (isTv) {
             newTvSeriesSearchResponse(display, data, TvType.TvSeries, fix = false) {
                 this.posterUrl = poster
-                this.year = this@toCatalogoSearchResponse.year
+                this.year = this@toNetflixSearchResponse.year
                 this.score = Score.from10(voteAverage)
             }
         } else {
             newMovieSearchResponse(display, data, TvType.Movie, fix = false) {
                 this.posterUrl = poster
-                this.year = this@toCatalogoSearchResponse.year
+                this.year = this@toNetflixSearchResponse.year
                 this.score = Score.from10(voteAverage)
             }
         }
