@@ -127,6 +127,36 @@ data class AngulismoOption(
     val iframe: String?
 )
 
+data class FBLResponse(
+    val data: List<FBLDiary>?
+)
+
+data class FBLDiary(
+    val id: Int?,
+    val attributes: FBLDiaryAttributes?
+)
+
+data class FBLDiaryAttributes(
+    val diary_description: String?,
+    val diary_hour: String?,
+    val date_diary: String?,
+    val embeds: FBLEmbeds?
+)
+
+data class FBLEmbeds(
+    val data: List<FBLEmbed>?
+)
+
+data class FBLEmbed(
+    val id: Int?,
+    val attributes: FBLEmbedAttributes?
+)
+
+data class FBLEmbedAttributes(
+    val embed_name: String?,
+    val embed_iframe: String?
+)
+
 data class StreamXHDResponse(
     val updated: String?,
     val sports: List<StreamXHDSport>?
@@ -214,6 +244,11 @@ class DeporTVProvider : MainAPI() {
                 "https://la18hd.su",
                 "/eventos/json/agenda123.json"
             ),
+            Site(
+                SiteKey.FUTBOLLIBRE,
+                "https://futbollibres.org.pe",
+                "/agenda-data.php"
+            ),
             // BROKEN SITES
             // TODO: fix old events
             // Site(
@@ -226,11 +261,7 @@ class DeporTVProvider : MainAPI() {
             //     "https://tvhd2.com",
             //     "https://pltvhd.com/diaries.json"
             // ),
-            // Site(
-            //     SiteKey.FUTBOLLIBRE,
-            //     "https://futbol-libres.su",
-            //     "/agenda/"
-            // ),
+
             // Site(
             //     SiteKey.STP_OLD,
             //     "https://streamtpday1.xyz",
@@ -299,109 +330,131 @@ class DeporTVProvider : MainAPI() {
                 var events: List<EventData> = emptyList()
                 if (res != null) {
                     if (it.key.equals(SiteKey.STP_OLD)) {
-                    events = AppUtils.tryParseJson<StreamTPResponse>(res.text)?.events
-                        ?.flatMap { event ->
-                            val title = event.title ?: return@flatMap emptyList()
-                            val time = event.time ?: "00:00"
-                            val matchId = streamedInfo.searchPosterByTitle(title)
-                            val urls = event.links?.mapNotNull { link -> link.url } ?: emptyList()
-                            listOf(
-                                EventData(
-                                    matchId.title,
-                                    matchId.hour ?: transformHourToLocal(time, "GMT-5"),
-                                    urls,
-                                    matchId.poster
-                                )
-                            )
-                        } ?: emptyList()
-                } else if (it.key.equals(SiteKey.LA18HD)
-                    || it.key.equals(SiteKey.STREAMXX)
-                    || it.key.equals(SiteKey.STP)
-                ) {
-                    events = AppUtils.tryParseJson<List<La14HDMatchInfo>>(res.text)
-                        ?.map {
-                            val matchId = streamedInfo.searchPosterByTitle(it.title)
-                            EventData(
-                                matchId.title,
-                                matchId.hour ?: transformHourToLocal(it.time, "GMT-5"),
-                                listOf(it.link),
-                                matchId.poster
-                            )
-                        } ?: emptyList()
-                } else if (it.key.equals(SiteKey.TVTVHD)) {
-                    val siteUrl = it.mainUrl
-                    events = AppUtils.tryParseJson<FTVHDApiResponse>(res.text)?.data
-                        ?.map {
-                            val matchId =
-                                streamedInfo.searchPosterByTitle(it.attributes.diaryDescription)
-                            EventData(
-                                matchId.title,
-                                matchId.hour ?: transformHourToLocal(
-                                    it.attributes.diaryHour.substringBeforeLast(":"),
-                                    "GMT-5"
-                                ),
-                                it.attributes.embeds.data.map { embed ->
-                                    val url = embed.attributes.embedIframe
-                                    if (url.startsWith("http")) url else "$siteUrl$url"
-                                },
-                                matchId.poster
-                            )
-                        } ?: emptyList()
-                } else if (it.key.equals(SiteKey.CANALESDEPORTIVOS)) {
-                    events = AppUtils.tryParseJson<List<PartidoJson>>(res.text)
-                        ?.map { partido ->
-                            val matchId = streamedInfo.searchPosterByTitle(partido.equipos)
-                            val hour = transformUtcToLocal(partido.hora_utc)
-                            EventData(
-                                matchId.title,
-                                matchId.hour ?: hour,
-                                partido.canales.map { canal ->
-                                    if (canal.url.startsWith("http")) canal.url else "${it.mainUrl}${canal.url}"
-                                },
-                                matchId.poster
-                            )
-                        } ?: emptyList()
-                } else if (it.key.equals(SiteKey.ANGULISMO)) {
-                    events = AppUtils.tryParseJson<AngulismoResponse>(res.text)?.events
-                        ?.map { evento ->
-                            val matchId = streamedInfo.searchPosterByTitle(evento.evento ?: "")
-                            val urls = evento.canales?.flatMap { canal ->
-                                canal.options?.mapNotNull { option -> option.iframe } ?: emptyList()
-                            } ?: emptyList()
-                            val time = evento.fecha?.substringAfter(" ")?.substringBeforeLast(":") ?: "00:00"
-                            EventData(
-                                matchId.title,
-                                matchId.hour ?: transformHourToLocal(time, "GMT-6"),
-                                urls,
-                                matchId.poster ?: evento.logoUrl
-                            )
-                        } ?: emptyList()
-                } else if (it.key.equals(SiteKey.STREAMXHD)) {
-                    events = AppUtils.tryParseJson<StreamXHDResponse>(res.text)?.sports
-                        ?.flatMap { sport ->
-                            sport.leagues?.flatMap { league ->
-                                league.events?.map { event ->
-                                    val matchId = streamedInfo.searchPosterByTitle(event.title ?: "")
-                                    val fullTime = event.time?.substringAfter(" ") ?: "00:00"
-                                    val time = if (fullTime.count { it == ':' } > 1) fullTime.substringBeforeLast(":") else fullTime
-                                    val urls = event.servers?.mapNotNull { server ->
-                                        if (server.active == true) server.url else null
-                                    } ?: emptyList()
+                        events = AppUtils.tryParseJson<StreamTPResponse>(res.text)?.events
+                            ?.flatMap { event ->
+                                val title = event.title ?: return@flatMap emptyList()
+                                val time = event.time ?: "00:00"
+                                val matchId = streamedInfo.searchPosterByTitle(title)
+                                val urls = event.links?.mapNotNull { link -> link.url } ?: emptyList()
+                                listOf(
                                     EventData(
                                         matchId.title,
                                         matchId.hour ?: transformHourToLocal(time, "GMT-5"),
                                         urls,
-                                        matchId.poster ?: event.homeLogo ?: event.awayLogo
+                                        matchId.poster
                                     )
+                                )
+                            } ?: emptyList()
+                    } else if (it.key.equals(SiteKey.LA18HD)
+                        || it.key.equals(SiteKey.STREAMXX)
+                        || it.key.equals(SiteKey.STP)
+                    ) {
+                        events = AppUtils.tryParseJson<List<La14HDMatchInfo>>(res.text)
+                            ?.map {
+                                val matchId = streamedInfo.searchPosterByTitle(it.title)
+                                EventData(
+                                    matchId.title,
+                                    matchId.hour ?: transformHourToLocal(it.time, "GMT-5"),
+                                    listOf(it.link),
+                                    matchId.poster
+                                )
+                            } ?: emptyList()
+                    } else if (it.key.equals(SiteKey.TVTVHD)) {
+                        val siteUrl = it.mainUrl
+                        events = AppUtils.tryParseJson<FTVHDApiResponse>(res.text)?.data
+                            ?.map {
+                                val matchId =
+                                    streamedInfo.searchPosterByTitle(it.attributes.diaryDescription)
+                                EventData(
+                                    matchId.title,
+                                    matchId.hour ?: transformHourToLocal(
+                                        it.attributes.diaryHour.substringBeforeLast(":"),
+                                        "GMT-5"
+                                    ),
+                                    it.attributes.embeds.data.map { embed ->
+                                        val url = embed.attributes.embedIframe
+                                        if (url.startsWith("http")) url else "$siteUrl$url"
+                                    },
+                                    matchId.poster
+                                )
+                            } ?: emptyList()
+                    } else if (it.key.equals(SiteKey.CANALESDEPORTIVOS)) {
+                        events = AppUtils.tryParseJson<List<PartidoJson>>(res.text)
+                            ?.map { partido ->
+                                val matchId = streamedInfo.searchPosterByTitle(partido.equipos)
+                                val hour = transformUtcToLocal(partido.hora_utc)
+                                EventData(
+                                    matchId.title,
+                                    matchId.hour ?: hour,
+                                    partido.canales.map { canal ->
+                                        if (canal.url.startsWith("http")) canal.url else "${it.mainUrl}${canal.url}"
+                                    },
+                                    matchId.poster
+                                )
+                            } ?: emptyList()
+                    } else if (it.key.equals(SiteKey.ANGULISMO)) {
+                        events = AppUtils.tryParseJson<AngulismoResponse>(res.text)?.events
+                            ?.map { evento ->
+                                val matchId = streamedInfo.searchPosterByTitle(evento.evento ?: "")
+                                val urls = evento.canales?.flatMap { canal ->
+                                    canal.options?.mapNotNull { option -> option.iframe } ?: emptyList()
+                                } ?: emptyList()
+                                val time = evento.fecha?.substringAfter(" ")?.substringBeforeLast(":") ?: "00:00"
+                                EventData(
+                                    matchId.title,
+                                    matchId.hour ?: transformHourToLocal(time, "GMT-6"),
+                                    urls,
+                                    matchId.poster ?: evento.logoUrl
+                                )
+                            } ?: emptyList()
+                    } else if (it.key.equals(SiteKey.STREAMXHD)) {
+                        events = AppUtils.tryParseJson<StreamXHDResponse>(res.text)?.sports
+                            ?.flatMap { sport ->
+                                sport.leagues?.flatMap { league ->
+                                    league.events?.map { event ->
+                                        val matchId = streamedInfo.searchPosterByTitle(event.title ?: "")
+                                        val fullTime = event.time?.substringAfter(" ") ?: "00:00"
+                                        val time =
+                                            if (fullTime.count { it == ':' } > 1) fullTime.substringBeforeLast(":") else fullTime
+                                        val urls = event.servers?.mapNotNull { server ->
+                                            if (server.active == true) server.url else null
+                                        } ?: emptyList()
+                                        EventData(
+                                            matchId.title,
+                                            matchId.hour ?: transformHourToLocal(time, "GMT-5"),
+                                            urls,
+                                            matchId.poster ?: event.homeLogo ?: event.awayLogo
+                                        )
+                                    } ?: emptyList()
                                 } ?: emptyList()
                             } ?: emptyList()
-                        } ?: emptyList()
-                } else {
-                    events = res.document.select(".menu > li")
-                        .mapNotNull { it.rusticoToEventData(url) }
+                    } else if (it.key.equals(SiteKey.FUTBOLLIBRE)) {
+                        val siteUrl = it.mainUrl
+                        events = AppUtils.tryParseJson<FBLResponse>(res.text)?.data
+                            ?.mapNotNull { diary ->
+                                val attrs = diary.attributes ?: return@mapNotNull null
+                                val title =
+                                    attrs.diary_description?.replace("\n", " ")?.trim() ?: return@mapNotNull null
+                                val hourRaw = attrs.diary_hour?.substringBeforeLast(":") ?: "00:00"
+                                val matchId = streamedInfo.searchPosterByTitle(title)
+                                val urls = attrs.embeds?.data?.mapNotNull { embed ->
+                                    val iframe = embed.attributes?.embed_iframe ?: return@mapNotNull null
+                                    if (iframe.startsWith("http")) iframe else "$siteUrl$iframe"
+                                } ?: emptyList()
+                                if (urls.isEmpty()) return@mapNotNull null
+                                EventData(
+                                    matchId.title,
+                                    matchId.hour ?: transformHourToLocal(hourRaw, "GMT-5"),
+                                    urls,
+                                    matchId.poster
+                                )
+                            } ?: emptyList()
+                    } else {
+                        events = res.document.select(".menu > li")
+                            .mapNotNull { it.rusticoToEventData(url) }
+                    }
                 }
-            }
-            events
+                events
             } catch (e: Exception) {
                 emptyList<EventData>()
             }
@@ -499,439 +552,439 @@ class DeporTVProvider : MainAPI() {
             return false
         eventData.urls.amap {
             try {
-            var frame = if (it.contains("?r=")) {
-                base64Decode(
-                    it.substringAfter("?r=")
-                )
-                    .replaceFirst(
-                        "https://vivolibre.org/global1.php?stream=",
-                        "https://streamtpday1.xyz/global1.php?stream="
-                    ).replaceFirst(
-                        "https://domainmy.lat/global1.php?stream=",
-                        "https://streamtpday1.xyz/global1.php?stream="
+                var frame = if (it.contains("?r=")) {
+                    base64Decode(
+                        it.substringAfter("?r=")
                     )
-                    .replaceFirst(
-                        "https://librefutbolhd.su/embed/canales.php?stream=",
-                        "https://tvtvhd.com/vivo/canales.php?stream="
-                    ).replaceFirst(
-                        "https://latamx701.org/global2.php?stream=",
-                        "https://la18hd.com/vivo/canales.php?stream="
-                    ).replaceFirst(
-                        "https://latamx701.org/global1.php?stream=",
-                        "https://streamtp-x-y-z.ws/global1.php?stream="
-                    )
-            } else it
-            if (frame.contains("canales.php?stream=") || frame.contains("canal.php?stream=")) {
-                val source = URL(frame).host
-                val name = frame.substringAfter("?stream=")
-                val iframeSrc = app.get(frame, referer = it).document.selectFirst("iframe")?.attr("src")
-                val url = if (iframeSrc != null && iframeSrc.startsWith("http")) {
-                    iframeSrc
-                } else if (iframeSrc != null) {
-                    "https://${URL(frame).host}$iframeSrc"
-                } else {
-                    frame
-                }
-                val doc = app.get(url, referer = frame).document
-                val link =
-                    doc.select("script").firstOrNull { it.data().contains("var playbackURL = ") }
-                        ?.data()
-                        ?.substringAfter("var playbackURL = \"")?.substringBefore("\";")
-                if (link != null)
-                    callback(
-                        newExtractorLink(
-                            "${source}[$name]",
-                            "${source}[$name]",
-                            link,
-                        ) {
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-            } else if (frame.contains("global1.php?")) {
-                val source = URL(frame).host
-                val chanelNameParameter = frame.substringAfter(".php?").substringBefore("=")
-                val name = frame.substringAfter(".php?$chanelNameParameter=")
-                val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
-                var result =
-                    doc.select("script").firstOrNull { it.html().contains("var playbackURL") }
-                        ?.let {
-                            var result = ""
-                            val scriptContent = it.data().substringBefore("var p2pConfig")
-                            val rhino = Context.enter()
-                            rhino.setInterpretedMode(true)
-                            val scope = rhino.initStandardObjects()
-                            try {
-                                scope.put(
-                                    "atob",
-                                    scope,
-                                    object : org.mozilla.javascript.BaseFunction() {
-                                        override fun call(
-                                            cx: org.mozilla.javascript.Context,
-                                            scope: org.mozilla.javascript.Scriptable,
-                                            thisObj: org.mozilla.javascript.Scriptable,
-                                            args: Array<out Any>
-                                        ): Any {
-                                            val str = args[0] as String
-                                            val decoded =
-                                                android.util.Base64.decode(str, Base64.DEFAULT)
-                                            return String(decoded, Charsets.UTF_8)
-                                        }
-                                    })
-                                rhino.evaluateString(scope, scriptContent, "playbackURL", 1, null)
-                                result = scope.get("playbackURL", scope).toString()
-                            } catch (e: Exception) {
-                            } finally {
-                                rhino.close()
-                            }
-                            result
-                        }
-                if (!result.isNullOrEmpty()) {
-                    callback(
-                        newExtractorLink(
-                            "${source}[$name]",
-                            "${source}[$name]",
-                            result,
-                        ) {
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                }
-            } else if (frame.contains("global2.php?")) {
-                val source = URL(frame).host
-                val chanelNameParameter = frame.substringAfter(".php?").substringBefore("=")
-                val name = frame.substringAfter(".php?$chanelNameParameter=")
-                val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
-                val link = doc.select("script").firstOrNull { it.data().contains("var playbackURL") }
-                    ?.data()
-                    ?.let { script ->
-                        val between = script.substringBefore("var p2pConfig")
-                        between.substringAfter("var playbackURL = \"").substringBefore("\";")
-                            .replace("\\/", "/").takeIf { s -> s.isNotBlank() }
+                        .replaceFirst(
+                            "https://vivolibre.org/global1.php?stream=",
+                            "https://streamtpday1.xyz/global1.php?stream="
+                        ).replaceFirst(
+                            "https://domainmy.lat/global1.php?stream=",
+                            "https://streamtpday1.xyz/global1.php?stream="
+                        )
+                        .replaceFirst(
+                            "https://librefutbolhd.su/embed/canales.php?stream=",
+                            "https://tvtvhd.com/vivo/canales.php?stream="
+                        ).replaceFirst(
+                            "https://latamx701.org/global2.php?stream=",
+                            "https://la18hd.com/vivo/canales.php?stream="
+                        ).replaceFirst(
+                            "https://latamx701.org/global1.php?stream=",
+                            "https://streamtp-x-y-z.ws/global1.php?stream="
+                        )
+                } else it
+                if (frame.contains("canales.php?stream=") || frame.contains("canal.php?stream=")) {
+                    val source = URL(frame).host
+                    val name = frame.substringAfter("?stream=")
+                    val iframeSrc = app.get(frame, referer = it).document.selectFirst("iframe")?.attr("src")
+                    val url = if (iframeSrc != null && iframeSrc.startsWith("http")) {
+                        iframeSrc
+                    } else if (iframeSrc != null) {
+                        "https://${URL(frame).host}$iframeSrc"
+                    } else {
+                        frame
                     }
-                if (!link.isNullOrEmpty()) {
-                    callback(
-                        newExtractorLink(
-                            "${source}[$name]",
-                            "${source}[$name]",
-                            link,
-                        ) {
-                            this.quality = Qualities.Unknown.value
-                            this.referer = frame
-                            this.headers = mapOf(
-                                "Origin" to "https://${URL(frame).host}",
-                                "Referer" to frame
-                            )
-                        }
-                    )
-                }
-            } else if (frame.contains("live1.php?stream=")) {
-                val source = URL(frame).host
-                val name = frame.substringAfter("?stream=")
-                val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
-                val scriptText = doc.select("script").map { it.data() }.joinToString("\n")
-                val playbackUrl = decodeStreamXHDUrl(scriptText)
-                if (!playbackUrl.isNullOrEmpty()) {
-                    callback(
-                        newExtractorLink(
-                            "${source}[$name]",
-                            "${source}[$name]",
-                            playbackUrl,
-                        ) {
-                            this.quality = Qualities.Unknown.value
-                            this.referer = frame
-                        }
-                    )
-                }
-            } else if (frame.startsWith("https://sudamericaplay2.com")) {
-                val source = URL(frame).host
-                val name = frame.substringAfterLast("/").substringBefore(".")
-                try {
+                    val doc = app.get(url, referer = frame).document
+                    val link =
+                        doc.select("script").firstOrNull { it.data().contains("var playbackURL = ") }
+                            ?.data()
+                            ?.substringAfter("var playbackURL = \"")?.substringBefore("\";")
+                    if (link != null)
+                        callback(
+                            newExtractorLink(
+                                "${source}[$name]",
+                                "${source}[$name]",
+                                link,
+                            ) {
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                } else if (frame.contains("global1.php?")) {
+                    val source = URL(frame).host
+                    val chanelNameParameter = frame.substringAfter(".php?").substringBefore("=")
+                    val name = frame.substringAfter(".php?$chanelNameParameter=")
                     val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
-                    val scripts = doc.select("script").map { it.data() }
-                    val rhino = Context.enter()
-                    rhino.setInterpretedMode(true)
-                    val scope = rhino.initStandardObjects()
-                    try {
-                        scope.put("atob", scope, object : org.mozilla.javascript.BaseFunction() {
-                            override fun call(
-                                cx: org.mozilla.javascript.Context,
-                                scope: org.mozilla.javascript.Scriptable,
-                                thisObj: org.mozilla.javascript.Scriptable,
-                                args: Array<out Any>
-                            ): Any {
-                                val str = args[0] as String
-                                val decoded = android.util.Base64.decode(str, Base64.DEFAULT)
-                                return String(decoded, Charsets.UTF_8)
-                            }
-                        })
-                        val fakeDoc = rhino.newObject(scope, "Object") as org.mozilla.javascript.Scriptable
-                        scope.put("document", scope, fakeDoc)
-                        val fakeWindow = rhino.newObject(scope, "Object") as org.mozilla.javascript.Scriptable
-                        scope.put("window", scope, fakeWindow)
-                        scope.put("navigator", scope, rhino.newObject(scope, "Object"))
-                        scope.put("setTimeout", scope, object : org.mozilla.javascript.BaseFunction() {
-                            override fun call(
-                                cx: org.mozilla.javascript.Context,
-                                scope: org.mozilla.javascript.Scriptable,
-                                thisObj: org.mozilla.javascript.Scriptable,
-                                args: Array<out Any>
-                            ): Any {
-                                if (args.isNotEmpty() && args[0] is org.mozilla.javascript.BaseFunction) {
-                                    try {
-                                        (args[0] as org.mozilla.javascript.BaseFunction).call(
-                                            cx,
-                                            scope,
-                                            thisObj,
-                                            emptyArray()
-                                        )
-                                    } catch (_: Exception) {
-                                    }
+                    var result =
+                        doc.select("script").firstOrNull { it.html().contains("var playbackURL") }
+                            ?.let {
+                                var result = ""
+                                val scriptContent = it.data().substringBefore("var p2pConfig")
+                                val rhino = Context.enter()
+                                rhino.setInterpretedMode(true)
+                                val scope = rhino.initStandardObjects()
+                                try {
+                                    scope.put(
+                                        "atob",
+                                        scope,
+                                        object : org.mozilla.javascript.BaseFunction() {
+                                            override fun call(
+                                                cx: org.mozilla.javascript.Context,
+                                                scope: org.mozilla.javascript.Scriptable,
+                                                thisObj: org.mozilla.javascript.Scriptable,
+                                                args: Array<out Any>
+                                            ): Any {
+                                                val str = args[0] as String
+                                                val decoded =
+                                                    android.util.Base64.decode(str, Base64.DEFAULT)
+                                                return String(decoded, Charsets.UTF_8)
+                                            }
+                                        })
+                                    rhino.evaluateString(scope, scriptContent, "playbackURL", 1, null)
+                                    result = scope.get("playbackURL", scope).toString()
+                                } catch (e: Exception) {
+                                } finally {
+                                    rhino.close()
                                 }
-                                return 0.0
+                                result
                             }
-                        })
-                        scope.put("setInterval", scope, scope.get("setTimeout", scope))
-                        val cleanScripts = scripts.joinToString("\n") { s ->
-                            s.replace(Regex("document\\.domain\\s*=.*?;"), "")
-                                .replace(Regex("window\\.location\\.(href|replace)\\s*=.*?;"), "")
-                                .replace(Regex("!function\\(\\)\\{try\\{.*?\\}\\}\\(\\);"), "")
-                        }
-                        rhino.evaluateString(scope, cleanScripts, "sudamericaplay", 1, null)
-                        val playbackUrl = scope.get("streamUrl", scope)?.toString()
-                            ?: scope.get("url", scope)?.toString()
-                            ?: scope.get("playbackURL", scope)?.toString()
-                        val ckId = scope.get("ck_id", scope)?.toString()
-                        val ckKey = scope.get("ck_key", scope)?.toString()
-                        if (!playbackUrl.isNullOrEmpty() && playbackUrl.startsWith("http")) {
-                            if (playbackUrl.contains(".mpd") && !ckId.isNullOrEmpty() && !ckKey.isNullOrEmpty()) {
-                                val drmKidBytes = ckId.chunked(2)
-                                    .map { it.toInt(16).toByte() }
-                                    .toByteArray()
-                                val drmKidBase64 = Base64.encodeToString(
-                                    drmKidBytes,
-                                    Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
-                                )
-                                val drmKeyBytes = ckKey.chunked(2)
-                                    .map { it.toInt(16).toByte() }
-                                    .toByteArray()
-                                val drmKeyBase64 = Base64.encodeToString(
-                                    drmKeyBytes,
-                                    Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
-                                )
-                                callback.invoke(
-                                    newDrmExtractorLink(
-                                        "${source}[$name]",
-                                        "${source}[$name]",
-                                        playbackUrl,
-                                        ExtractorLinkType.DASH,
-                                        CLEARKEY_UUID
-                                    ) {
-                                        this.quality = Qualities.Unknown.value
-                                        this.kid = drmKidBase64
-                                        this.key = drmKeyBase64
-                                        this.referer = frame
-                                        this.headers = mapOf(
-                                            "Origin" to "https://${URL(frame).host}",
-                                            "Referer" to frame
-                                        )
-                                    }
-                                )
-                            } else {
-                                callback(
-                                    newExtractorLink(
-                                        "${source}[$name]",
-                                        "${source}[$name]",
-                                        playbackUrl,
-                                    ) {
-                                        this.quality = Qualities.Unknown.value
-                                        this.referer = frame
-                                        this.headers = mapOf(
-                                            "Origin" to "https://${URL(frame).host}",
-                                            "Referer" to frame
-                                        )
-                                    }
-                                )
+                    if (!result.isNullOrEmpty()) {
+                        callback(
+                            newExtractorLink(
+                                "${source}[$name]",
+                                "${source}[$name]",
+                                result,
+                            ) {
+                                this.quality = Qualities.Unknown.value
                             }
-                        }
-                    } catch (_: Exception) {
-                    } finally {
-                        rhino.close()
+                        )
                     }
-                } catch (_: Exception) {
-                }
-            } else if (frame.startsWith("https://rojadirectatve.com")) {
-                val url = frame.substringAfter("?get=")
-                val source = URL(url).host
-                val name = url.substringAfter("/repro/").substringBefore(".html")
-                app.get(url).document.selectFirst("iframe")?.attr("src")
-                    ?.replaceFirst("//", "https://")?.let {
-                        val lastFrameUrl = it
-                        app.get(
-                            lastFrameUrl,
-                            referer = "https://rojadirectatve.com/",
-                            headers = mapOf("Sec-Fetch-Dest" to "iframe")
-                        ).document.select("script")
-                            .firstOrNull {
-                                it.data().contains("eval(function(p,a,c,k,e,d)") && it.data()
-                                    .contains("Clappr")
-                            }?.let {
-                                val script = getAndUnpack(it.data())
-                                if (script.contains("src=")) {
+                } else if (frame.contains("global2.php?")) {
+                    val source = URL(frame).host
+                    val chanelNameParameter = frame.substringAfter(".php?").substringBefore("=")
+                    val name = frame.substringAfter(".php?$chanelNameParameter=")
+                    val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
+                    val link = doc.select("script").firstOrNull { it.data().contains("var playbackURL") }
+                        ?.data()
+                        ?.let { script ->
+                            val between = script.substringBefore("var p2pConfig")
+                            between.substringAfter("var playbackURL = \"").substringBefore("\";")
+                                .replace("\\/", "/").takeIf { s -> s.isNotBlank() }
+                        }
+                    if (!link.isNullOrEmpty()) {
+                        callback(
+                            newExtractorLink(
+                                "${source}[$name]",
+                                "${source}[$name]",
+                                link,
+                            ) {
+                                this.quality = Qualities.Unknown.value
+                                this.referer = frame
+                                this.headers = mapOf(
+                                    "Origin" to "https://${URL(frame).host}",
+                                    "Referer" to frame
+                                )
+                            }
+                        )
+                    }
+                } else if (frame.contains("live1.php?stream=")) {
+                    val source = URL(frame).host
+                    val name = frame.substringAfter("?stream=")
+                    val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
+                    val scriptText = doc.select("script").map { it.data() }.joinToString("\n")
+                    val playbackUrl = decodeStreamXHDUrl(scriptText)
+                    if (!playbackUrl.isNullOrEmpty()) {
+                        callback(
+                            newExtractorLink(
+                                "${source}[$name]",
+                                "${source}[$name]",
+                                playbackUrl,
+                            ) {
+                                this.quality = Qualities.Unknown.value
+                                this.referer = frame
+                            }
+                        )
+                    }
+                } else if (frame.startsWith("https://sudamericaplay2.com")) {
+                    val source = URL(frame).host
+                    val name = frame.substringAfterLast("/").substringBefore(".")
+                    try {
+                        val doc = app.get(frame, headers = mapOf("Sec-Fetch-Dest" to "iframe")).document
+                        val scripts = doc.select("script").map { it.data() }
+                        val rhino = Context.enter()
+                        rhino.setInterpretedMode(true)
+                        val scope = rhino.initStandardObjects()
+                        try {
+                            scope.put("atob", scope, object : org.mozilla.javascript.BaseFunction() {
+                                override fun call(
+                                    cx: org.mozilla.javascript.Context,
+                                    scope: org.mozilla.javascript.Scriptable,
+                                    thisObj: org.mozilla.javascript.Scriptable,
+                                    args: Array<out Any>
+                                ): Any {
+                                    val str = args[0] as String
+                                    val decoded = android.util.Base64.decode(str, Base64.DEFAULT)
+                                    return String(decoded, Charsets.UTF_8)
+                                }
+                            })
+                            val fakeDoc = rhino.newObject(scope, "Object") as org.mozilla.javascript.Scriptable
+                            scope.put("document", scope, fakeDoc)
+                            val fakeWindow = rhino.newObject(scope, "Object") as org.mozilla.javascript.Scriptable
+                            scope.put("window", scope, fakeWindow)
+                            scope.put("navigator", scope, rhino.newObject(scope, "Object"))
+                            scope.put("setTimeout", scope, object : org.mozilla.javascript.BaseFunction() {
+                                override fun call(
+                                    cx: org.mozilla.javascript.Context,
+                                    scope: org.mozilla.javascript.Scriptable,
+                                    thisObj: org.mozilla.javascript.Scriptable,
+                                    args: Array<out Any>
+                                ): Any {
+                                    if (args.isNotEmpty() && args[0] is org.mozilla.javascript.BaseFunction) {
+                                        try {
+                                            (args[0] as org.mozilla.javascript.BaseFunction).call(
+                                                cx,
+                                                scope,
+                                                thisObj,
+                                                emptyArray()
+                                            )
+                                        } catch (_: Exception) {
+                                        }
+                                    }
+                                    return 0.0
+                                }
+                            })
+                            scope.put("setInterval", scope, scope.get("setTimeout", scope))
+                            val cleanScripts = scripts.joinToString("\n") { s ->
+                                s.replace(Regex("document\\.domain\\s*=.*?;"), "")
+                                    .replace(Regex("window\\.location\\.(href|replace)\\s*=.*?;"), "")
+                                    .replace(Regex("!function\\(\\)\\{try\\{.*?\\}\\}\\(\\);"), "")
+                            }
+                            rhino.evaluateString(scope, cleanScripts, "sudamericaplay", 1, null)
+                            val playbackUrl = scope.get("streamUrl", scope)?.toString()
+                                ?: scope.get("url", scope)?.toString()
+                                ?: scope.get("playbackURL", scope)?.toString()
+                            val ckId = scope.get("ck_id", scope)?.toString()
+                            val ckKey = scope.get("ck_key", scope)?.toString()
+                            if (!playbackUrl.isNullOrEmpty() && playbackUrl.startsWith("http")) {
+                                if (playbackUrl.contains(".mpd") && !ckId.isNullOrEmpty() && !ckKey.isNullOrEmpty()) {
+                                    val drmKidBytes = ckId.chunked(2)
+                                        .map { it.toInt(16).toByte() }
+                                        .toByteArray()
+                                    val drmKidBase64 = Base64.encodeToString(
+                                        drmKidBytes,
+                                        Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                                    )
+                                    val drmKeyBytes = ckKey.chunked(2)
+                                        .map { it.toInt(16).toByte() }
+                                        .toByteArray()
+                                    val drmKeyBase64 = Base64.encodeToString(
+                                        drmKeyBytes,
+                                        Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                                    )
+                                    callback.invoke(
+                                        newDrmExtractorLink(
+                                            "${source}[$name]",
+                                            "${source}[$name]",
+                                            playbackUrl,
+                                            ExtractorLinkType.DASH,
+                                            CLEARKEY_UUID
+                                        ) {
+                                            this.quality = Qualities.Unknown.value
+                                            this.kid = drmKidBase64
+                                            this.key = drmKeyBase64
+                                            this.referer = frame
+                                            this.headers = mapOf(
+                                                "Origin" to "https://${URL(frame).host}",
+                                                "Referer" to frame
+                                            )
+                                        }
+                                    )
+                                } else {
                                     callback(
                                         newExtractorLink(
                                             "${source}[$name]",
                                             "${source}[$name]",
-                                            script.substringAfter("src=\"")
-                                                .substringBefore("\";")
+                                            playbackUrl,
                                         ) {
                                             this.quality = Qualities.Unknown.value
-                                            this.referer = lastFrameUrl
+                                            this.referer = frame
+                                            this.headers = mapOf(
+                                                "Origin" to "https://${URL(frame).host}",
+                                                "Referer" to frame
+                                            )
                                         }
                                     )
                                 }
                             }
+                        } catch (_: Exception) {
+                        } finally {
+                            rhino.close()
+                        }
+                    } catch (_: Exception) {
                     }
-            } else if (frame.startsWith("https://stgruber.world")) {
-                // https://stgruber.world/cobo1.php?id=UNIVERSO
-                val source = URL(frame).host
-                var result = app.get(
-                    frame,
-                    referer = "https://ww.futbollibre-tv.su/"
-                ).document.select("script")
-                    .first { it.data().contains("ConfiguracionCanales =") }?.data()
-                    ?.substringAfter("ConfiguracionCanales = {")?.substringBefore("};")
-                result = "{$result}"
-                val json = result
-                    .replace("url:", "\"url\":")
-                    .replace("k1:", "\"k1\":")
-                    .replace("k2:", "\"k2\":")
-                    .replace(Regex(",\\s*\\}"), "}")
-                var channels = AppUtils.tryParseJson<Map<String, StgruberChannelInfo>>(json)
-                val channelId = frame.substringAfter("?id=")
-                val channelinfo = channels?.get(channelId)
-                if (channelinfo != null) {
-                    if (channelinfo.url.contains("mpd")) {
-                        val drmKidBytes = channelinfo.k1?.chunked(2)
-                            ?.map { it.toInt(16).toByte() }
-                            ?.toByteArray()
-                        val drmKidBase64 = Base64.encodeToString(
-                            drmKidBytes,
-                            Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
-                        )
-                        val drmKeyBytes = channelinfo.k2?.chunked(2)
-                            ?.map { it.toInt(16).toByte() }
-                            ?.toByteArray()
-                        val drmKeyBase64 = Base64.encodeToString(
-                            drmKeyBytes,
-                            Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
-                        )
-                        callback.invoke(
-                            newDrmExtractorLink(
-                                "${source}[$channelId]",
-                                "${source}[$channelId]",
-                                channelinfo.url,
-                                ExtractorLinkType.DASH,
-                                CLEARKEY_UUID
-                            ) {
-                                this.quality = Qualities.Unknown.value
-                                this.kid = drmKidBase64
-                                this.key = drmKeyBase64
-                            }
-                        )
-                    } else {
-                        callback(
-                            newExtractorLink(
-                                "${source}[$channelId]",
-                                "${source}[$channelId]",
-                                channelinfo.url
-                            ) {
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                    }
-                }
-            } else if (
-                frame.startsWith("https://envivo1.org/zk.php?id=")
-                || frame.startsWith("https://voodc.com")
-            ) {
-                if (frame.startsWith("https://envivo1.org/zk.php?id=")) {
-                    val resolver = WebViewResolver(
-                        interceptUrl = Regex("""voodc\.com/embed"""),
-                        additionalUrls = listOf(Regex("""voodc\.com/embed""")),
-                        useOkhttp = false,
-                        timeout = 3_000L
-                    )
-                    frame = app.get(frame, interceptor = resolver).url
-                }
-                if (frame.startsWith("https://voodc.com")) {
-                    val subFrameUrl = if (frame.startsWith("https://voodc.com/embed")) {
-                        app.get(frame).document.select("script")
-                            .first { it.attr("src").startsWith("//voodc.com/embed/0/0/") }?.let {
-                                var src = it.attr("src").substringAfter("//voodc.com/embed/0/0/")
-                                val id = src.substringBefore("/")
-                                val hash = src.substringAfter("/")
-                                "https://voodc.com/player/d/$hash/$id"
-                            }
-                    } else {
-                        frame
-                    }
-                    if (subFrameUrl != null) {
-                        val source = URL(frame).host
-                        val url = app.get(subFrameUrl).document.select("script")
-                            .first { it.data().contains("var PlayS = '") }?.data()
-                            ?.substringAfter("var PlayS = '")
-                            ?.substringBefore("';")
-                        if (url != null) {
+                } else if (frame.startsWith("https://rojadirectatve.com")) {
+                    val url = frame.substringAfter("?get=")
+                    val source = URL(url).host
+                    val name = url.substringAfter("/repro/").substringBefore(".html")
+                    app.get(url).document.selectFirst("iframe")?.attr("src")
+                        ?.replaceFirst("//", "https://")?.let {
+                            val lastFrameUrl = it
+                            app.get(
+                                lastFrameUrl,
+                                referer = "https://rojadirectatve.com/",
+                                headers = mapOf("Sec-Fetch-Dest" to "iframe")
+                            ).document.select("script")
+                                .firstOrNull {
+                                    it.data().contains("eval(function(p,a,c,k,e,d)") && it.data()
+                                        .contains("Clappr")
+                                }?.let {
+                                    val script = getAndUnpack(it.data())
+                                    if (script.contains("src=")) {
+                                        callback(
+                                            newExtractorLink(
+                                                "${source}[$name]",
+                                                "${source}[$name]",
+                                                script.substringAfter("src=\"")
+                                                    .substringBefore("\";")
+                                            ) {
+                                                this.quality = Qualities.Unknown.value
+                                                this.referer = lastFrameUrl
+                                            }
+                                        )
+                                    }
+                                }
+                        }
+                } else if (frame.startsWith("https://stgruber.world")) {
+                    // https://stgruber.world/cobo1.php?id=UNIVERSO
+                    val source = URL(frame).host
+                    var result = app.get(
+                        frame,
+                        referer = "https://futbollibres.org.pe/"
+                    ).document.select("script")
+                        .first { it.data().contains("ConfiguracionCanales =") }?.data()
+                        ?.substringAfter("ConfiguracionCanales = {")?.substringBefore("};")
+                    result = "{$result}"
+                    val json = result
+                        .replace("url:", "\"url\":")
+                        .replace("k1:", "\"k1\":")
+                        .replace("k2:", "\"k2\":")
+                        .replace(Regex(",\\s*\\}"), "}")
+                    var channels = AppUtils.tryParseJson<Map<String, StgruberChannelInfo>>(json)
+                    val channelId = frame.substringAfter("?id=")
+                    val channelinfo = channels?.get(channelId)
+                    if (channelinfo != null) {
+                        if (channelinfo.url.contains("mpd")) {
+                            val drmKidBytes = channelinfo.k1?.chunked(2)
+                                ?.map { it.toInt(16).toByte() }
+                                ?.toByteArray()
+                            val drmKidBase64 = Base64.encodeToString(
+                                drmKidBytes,
+                                Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                            )
+                            val drmKeyBytes = channelinfo.k2?.chunked(2)
+                                ?.map { it.toInt(16).toByte() }
+                                ?.toByteArray()
+                            val drmKeyBase64 = Base64.encodeToString(
+                                drmKeyBytes,
+                                Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
+                            )
+                            callback.invoke(
+                                newDrmExtractorLink(
+                                    "${source}[$channelId]",
+                                    "${source}[$channelId]",
+                                    channelinfo.url,
+                                    ExtractorLinkType.DASH,
+                                    CLEARKEY_UUID
+                                ) {
+                                    this.quality = Qualities.Unknown.value
+                                    this.kid = drmKidBase64
+                                    this.key = drmKeyBase64
+                                }
+                            )
+                        } else {
                             callback(
                                 newExtractorLink(
-                                    "${source}",
-                                    "${source}",
-                                    url
+                                    "${source}[$channelId]",
+                                    "${source}[$channelId]",
+                                    channelinfo.url
                                 ) {
                                     this.quality = Qualities.Unknown.value
                                 }
                             )
                         }
                     }
-
-                }
-            } else if (frame.startsWith("https://canalesdeportivos.net/ver/") || frame.startsWith("https://elcanaldeportivo.com/ver/")) {
-                val name = frame.substringAfterLast("/").substringBefore(".php")
-                val doc = app.get(frame).document
-                val iframeSrc = doc.selectFirst("iframe")?.attr("src")
-                if (iframeSrc != null) {
-                    val resolvedUrl = if (iframeSrc.startsWith("http")) iframeSrc
-                    else "https://${URL(frame).host}${iframeSrc}"
-                    val fidDoc = app.get(resolvedUrl).document
-                    val fid = fidDoc.select("script").firstOrNull { it.data().contains("fid=") }
-                        ?.data()?.substringAfter("fid=\"")?.substringBefore("\"")
-                    if (fid != null) {
-                        val deepUrl = "https://deepcathink.com/deportivo.php?player=desktop&live=$fid"
-                        val deepText = app.get(deepUrl, referer = frame).text
-                        val m3u8Url = extractDeepCathinkUrl(deepText)
-                        if (m3u8Url != null) {
-                            callback(
-                                newExtractorLink(
-                                    "CanalesDeportivos[$name]",
-                                    "CanalesDeportivos[$name]",
-                                    m3u8Url,
-                                ) {
-                                    this.quality = Qualities.Unknown.value
-                                    this.referer = "https://deepcathink.com/"
+                } else if (
+                    frame.startsWith("https://envivo1.org/zk.php?id=")
+                    || frame.startsWith("https://voodc.com")
+                ) {
+                    if (frame.startsWith("https://envivo1.org/zk.php?id=")) {
+                        val resolver = WebViewResolver(
+                            interceptUrl = Regex("""voodc\.com/embed"""),
+                            additionalUrls = listOf(Regex("""voodc\.com/embed""")),
+                            useOkhttp = false,
+                            timeout = 3_000L
+                        )
+                        frame = app.get(frame, interceptor = resolver).url
+                    }
+                    if (frame.startsWith("https://voodc.com")) {
+                        val subFrameUrl = if (frame.startsWith("https://voodc.com/embed")) {
+                            app.get(frame).document.select("script")
+                                .first { it.attr("src").startsWith("//voodc.com/embed/0/0/") }?.let {
+                                    var src = it.attr("src").substringAfter("//voodc.com/embed/0/0/")
+                                    val id = src.substringBefore("/")
+                                    val hash = src.substringAfter("/")
+                                    "https://voodc.com/player/d/$hash/$id"
                                 }
-                            )
+                        } else {
+                            frame
                         }
-                    } else {
-                        val directFrame = fidDoc.selectFirst("iframe")?.attr("src")
-                        if (directFrame != null) {
-                            val embedUrl = if (directFrame.startsWith("http")) directFrame
-                            else "https://${URL(resolvedUrl).host}$directFrame"
-                            loadExtractor(embedUrl, referer = resolvedUrl, subtitleCallback, callback)
+                        if (subFrameUrl != null) {
+                            val source = URL(frame).host
+                            val url = app.get(subFrameUrl).document.select("script")
+                                .first { it.data().contains("var PlayS = '") }?.data()
+                                ?.substringAfter("var PlayS = '")
+                                ?.substringBefore("';")
+                            if (url != null) {
+                                callback(
+                                    newExtractorLink(
+                                        "${source}",
+                                        "${source}",
+                                        url
+                                    ) {
+                                        this.quality = Qualities.Unknown.value
+                                    }
+                                )
+                            }
+                        }
+
+                    }
+                } else if (frame.startsWith("https://canalesdeportivos.net/ver/") || frame.startsWith("https://elcanaldeportivo.com/ver/")) {
+                    val name = frame.substringAfterLast("/").substringBefore(".php")
+                    val doc = app.get(frame).document
+                    val iframeSrc = doc.selectFirst("iframe")?.attr("src")
+                    if (iframeSrc != null) {
+                        val resolvedUrl = if (iframeSrc.startsWith("http")) iframeSrc
+                        else "https://${URL(frame).host}${iframeSrc}"
+                        val fidDoc = app.get(resolvedUrl).document
+                        val fid = fidDoc.select("script").firstOrNull { it.data().contains("fid=") }
+                            ?.data()?.substringAfter("fid=\"")?.substringBefore("\"")
+                        if (fid != null) {
+                            val deepUrl = "https://deepcathink.com/deportivo.php?player=desktop&live=$fid"
+                            val deepText = app.get(deepUrl, referer = frame).text
+                            val m3u8Url = extractDeepCathinkUrl(deepText)
+                            if (m3u8Url != null) {
+                                callback(
+                                    newExtractorLink(
+                                        "CanalesDeportivos[$name]",
+                                        "CanalesDeportivos[$name]",
+                                        m3u8Url,
+                                    ) {
+                                        this.quality = Qualities.Unknown.value
+                                        this.referer = "https://deepcathink.com/"
+                                    }
+                                )
+                            }
+                        } else {
+                            val directFrame = fidDoc.selectFirst("iframe")?.attr("src")
+                            if (directFrame != null) {
+                                val embedUrl = if (directFrame.startsWith("http")) directFrame
+                                else "https://${URL(resolvedUrl).host}$directFrame"
+                                loadExtractor(embedUrl, referer = resolvedUrl, subtitleCallback, callback)
+                            }
                         }
                     }
-                }
 
-            }
+                }
             } catch (e: Exception) {
             }
 
