@@ -289,14 +289,32 @@ class CatalogoInfantilProvider : MainAPI() {
 
         data class SearchMatch(val providerName: String, val loaded: LoadResponse)
 
+        // A match must be of the same media type (movie vs series) as the item
+        // being loaded, otherwise a same-named movie could be returned for a
+        // series and vice versa.
+        fun SearchResponse.typeOk(): Boolean {
+            val t = this.type
+            return if (data.isTv) {
+                t?.let { it != TvType.Movie && it != TvType.AnimeMovie } ?: (this is TvSeriesSearchResponse)
+            } else {
+                t?.let { it == TvType.Movie || it == TvType.AnimeMovie } ?: (this is MovieSearchResponse)
+            }
+        }
+
+        fun SearchResponse.yearOk(): Boolean {
+            val y = when (this) {
+                is MovieSearchResponse -> this.year
+                is TvSeriesSearchResponse -> this.year
+                else -> null
+            } ?: return true
+            return searchYear == null || y == searchYear
+        }
+
         val matches = validApis.amap { api ->
             try {
                 val searchResult = api.search(title, 1) ?: return@amap null
                 val matched = searchResult.items.firstOrNull {
-                    filterName(it.name).equals(matchName, ignoreCase = true)
-                            && (it as? MovieSearchResponse)?.year?.let { y -> searchYear == null || y == searchYear }
-                            ?: (it as? TvSeriesSearchResponse)?.year?.let { y -> searchYear == null || y == searchYear }
-                            ?: true
+                    it.typeOk() && filterName(it.name).equals(matchName, ignoreCase = true) && it.yearOk()
                 } ?: return@amap null
                 val loaded = api.load(matched.url) ?: return@amap null
                 SearchMatch(api.name, loaded)
@@ -353,11 +371,21 @@ class CatalogoInfantilProvider : MainAPI() {
             }
 
             is TvSeriesLoadResponse -> {
-                // Use episodes from the matched provider, but wrap each episode's
-                // data so loadLinks can identify the source provider and delegate.
-                val providerName = first.providerName
+                // Collect every provider that matched as a series so that when the
+                // user plays an episode, loadLinks can fall back across all of
+                // them instead of only the first match (a provider may lack
+                // working links for an episode while another has them).
+                val seriesMatches = matches.filter { it.loaded is TvSeriesLoadResponse }
                 val wrappedEpisodes = loaded.episodes.map { ep ->
-                    val wrapped = CrossSource(providerName, ep.data).toJson()
+                    val sources = mutableListOf(CrossSource(first.providerName, ep.data))
+                    seriesMatches.forEach { other ->
+                        if (other.providerName == first.providerName) return@forEach
+                        val otherLoaded = other.loaded as TvSeriesLoadResponse
+                        otherLoaded.episodes.firstOrNull {
+                            it.season == ep.season && it.episode == ep.episode
+                        }?.let { sources.add(CrossSource(other.providerName, it.data)) }
+                    }
+                    val wrapped = CrossMetaData(true, sources).toJson()
                     @Suppress("DEPRECATION_ERROR")
                     Episode(
                         data = wrapped,
@@ -391,30 +419,35 @@ class CatalogoInfantilProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        var linksFound = false
+        val wrappedCallback: (ExtractorLink) -> Unit = { link ->
+            linksFound = true
+            callback(link)
+        }
         // Try CrossMetaData first (movies — contains list of sources)
         tryParseJson<CrossMetaData>(data)?.let { metaData ->
             if (!metaData.isSuccess) return false
             metaData.sources?.amap { source ->
                 getApiFromNameNull(source.apiName)?.let {
                     try {
-                        it.loadLinks(source.dataUrl, isCasting, subtitleCallback, callback)
+                        it.loadLinks(source.dataUrl, isCasting, subtitleCallback, wrappedCallback)
                     } catch (e: Exception) {
                         logError(e)
                     }
                 }
             }
-            return true
+            return linksFound
         }
         // Try CrossSource (TV episodes — single source wrapping episode data)
         tryParseJson<CrossSource>(data)?.let { source ->
             getApiFromNameNull(source.apiName)?.let {
                 try {
-                    it.loadLinks(source.dataUrl, isCasting, subtitleCallback, callback)
+                    it.loadLinks(source.dataUrl, isCasting, subtitleCallback, wrappedCallback)
                 } catch (e: Exception) {
                     logError(e)
                 }
             }
-            return true
+            return linksFound
         }
         return false
     }
