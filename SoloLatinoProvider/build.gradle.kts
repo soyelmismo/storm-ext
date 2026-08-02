@@ -7,7 +7,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
 
     description = "Peliculas, series, animes y cartoons en Español y Español Latio"
-    authors = listOf("misajimenezmx")
+    authors = listOf("redblacker8")
 
     /**
      * Status int as the following:

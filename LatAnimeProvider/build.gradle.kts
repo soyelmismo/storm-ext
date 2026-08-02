@@ -7,7 +7,7 @@ cloudstream {
     // All of these properties are optional, you can safely remove them
 
     description = "Anime en latino y subtitulado."
-    authors = listOf("misajimenezmx")
+    authors = listOf("redblacker8")
 
     /**
      * Status int as the following:
