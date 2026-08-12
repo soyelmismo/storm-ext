@@ -36,6 +36,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Calendar
 import java.util.Collections
 
@@ -140,15 +141,18 @@ class CatalogoInfantilProvider : MainAPI() {
     private val validApis
         get() = apis.filter { it.lang == this.lang && it::class != this::class }
 
-    // Resolving a title searches the other installed providers. Searching ALL of
-    // them at once is what makes load() slow when many providers are installed
-    // (CloudStream also calls load() for the home page preview row, so a slow
-    // load() stalls the whole main page). Providers are searched in small
-    // batches and we stop early once enough matches are found; every outcome is
-    // cached per title so a repeat load() is instant.
-    private val providerBatchSize = 2
-    private val minMatchesForFallback = 2
-    private val providerSearchTimeoutMs = 10_000L
+    // Resolving a title searches the other installed providers. CloudStream
+    // calls load() for the home page preview (hero) row, so a slow load()
+    // stalls the whole main page. All providers are therefore searched in
+    // parallel and the whole search is capped by a short global deadline: the
+    // worst case is a few seconds instead of one round of up to 10s per batch
+    // of providers. The slowest providers are cut off individually, and only
+    // COMPLETE results are cached per title so a truncated search is not
+    // memoized as "no match" (a real match would stay hidden for the whole
+    // cache window). A repeat load() is instant.
+    private val providerSearchTimeoutMs = 5_000L
+    private val findMatchesDeadlineMs = 6_000L
+    private val maxMatchesForFallback = 4
 
     // Short-lived cache for TMDB responses so that reloading the home page
     // (CloudStream refetches every section at once) is instant instead of
@@ -233,18 +237,32 @@ class CatalogoInfantilProvider : MainAPI() {
         val now = System.currentTimeMillis()
         searchCache[key]?.let { if (now - it.timestamp < searchCacheMs) return it.matches }
 
-        val matches = mutableListOf<SearchMatch>()
-        for (batch in validApis.chunked(providerBatchSize)) {
-            batch.amap { api ->
+        // All providers are hit in parallel so that the wall-clock time is the
+        // slowest provider, not the sum of all of them. The global deadline
+        // bounds the whole search (e.g. when the title matches nothing and
+        // every provider has to answer first).
+        var complete = true
+        val matches = withTimeoutOrNull(findMatchesDeadlineMs) {
+            validApis.amap { api ->
                 searchProvider(api, title, matchName, searchYear, isTv)
-            }.filterNotNull().forEach { matches.add(it) }
-            if (matches.size >= minMatchesForFallback) break
+            }.filterNotNull()
+        } ?: run {
+            complete = false
+            emptyList()
         }
-        searchCache[key] = SearchCacheEntry(now, matches)
-        if (searchCache.size > 250) {
-            searchCache.clear()
+
+        val result = matches.take(maxMatchesForFallback)
+
+        // Cache only a complete result: a run cut short by the deadline (some
+        // slow provider not yet answered) is not memoized as "no match", so a
+        // real match is not hidden for the whole cache window.
+        if (complete) {
+            searchCache[key] = SearchCacheEntry(now, result)
+            if (searchCache.size > 250) {
+                searchCache.clear()
+            }
         }
-        return matches
+        return result
     }
 
     private val apiKey = "e6333b32409e02a4a6eba6fb7ff866bb"
@@ -403,10 +421,10 @@ class CatalogoInfantilProvider : MainAPI() {
         val tags = details.genres?.mapNotNull { it.name }
 
         // Search other providers for this title and collect playable data.
-        // Only a capped number of providers is hit (in small batches) so that
-        // load() stays fast even when many providers are installed — CloudStream
-        // calls load() for the home page preview row, so a slow load() stalls
-        // the main page.
+        // All providers are hit in parallel under a short global deadline so
+        // that load() stays fast even when many providers are installed —
+        // CloudStream calls load() for the home page preview row, so a slow
+        // load() stalls the main page.
         val matchName = filterName(title)
         val searchYear = year
         val matches = findMatches(title, matchName, searchYear, data.isTv)
