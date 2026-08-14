@@ -110,8 +110,8 @@ data class NetflixCrossSource(
  * provider's episodes list. If no match is found, the detail shows metadata
  * only (comingSoon) with a search button via QuickSearch.
  */
-class NetflixCatalogoLatamProvider : MainAPI() {
-    override var name = "Netflix LATAM"
+class CatalogoNetflixProvider : MainAPI() {
+    override var name = "Catálogo Netflix"
     override var mainUrl = "https://www.themoviedb.org"
     override var lang = "mx"
     override val providerType = ProviderType.MetaProvider
@@ -151,7 +151,9 @@ class NetflixCatalogoLatamProvider : MainAPI() {
     // (CloudStream refetches every section at once) is instant instead of
     // hammering TMDB with ~36 parallel requests.
     private val tmdbCacheMs = 15L * 60 * 1000
+
     private data class TmdbCacheEntry(val timestamp: Long, val body: String)
+
     private val tmdbCache = Collections.synchronizedMap(HashMap<String, TmdbCacheEntry>())
 
     // Short-lived cache for the provider-search outcome per title, so the search
@@ -159,7 +161,9 @@ class NetflixCatalogoLatamProvider : MainAPI() {
     // same title, e.g. from another row or after the app's own load cache
     // evicts it, returns instantly).
     private val searchCacheMs = 10L * 60 * 1000
+
     private data class SearchCacheEntry(val timestamp: Long, val matches: List<SearchMatch>)
+
     private val searchCache = Collections.synchronizedMap(HashMap<String, SearchCacheEntry>())
 
     private class SearchMatch(val providerName: String, val loaded: LoadResponse)
@@ -319,6 +323,8 @@ class NetflixCatalogoLatamProvider : MainAPI() {
     }
 
     override val mainPage = listOf(
+        mainPage("top10global", "Top 10 Global", false),
+        mainPage("top10mexico", "Top 10 México", false),
         mainPage("popular", "Netflix Popular", false),
         mainPage("top", "Mejor Calificadas", false),
         mainPage("nuevos", "Estrenos", false),
@@ -343,17 +349,21 @@ class NetflixCatalogoLatamProvider : MainAPI() {
         val horizontal = false
 
         val raw = when (request.data) {
+            "top10global" -> top10Section("https://www.netflix.com/tudum/top10")
+
+            "top10mexico" -> top10Section("https://www.netflix.com/tudum/top10/mexico")
+
             "popular" ->
                 discoverMovies(page, "popularity.desc") +
-                    discoverSeries(page, "popularity.desc")
+                        discoverSeries(page, "popularity.desc")
 
             "top" ->
                 discoverMovies(page, "vote_average.desc", minVotes = true) +
-                    discoverSeries(page, "vote_average.desc", minVotes = true)
+                        discoverSeries(page, "vote_average.desc", minVotes = true)
 
             "nuevos" ->
                 discoverMovies(page, "primary_release_date.desc", recent = true) +
-                    discoverSeries(page, "first_air_date.desc", recent = true)
+                        discoverSeries(page, "first_air_date.desc", recent = true)
 
             "originales" ->
                 discoverSeries(page, "popularity.desc", originals = true)
@@ -375,11 +385,16 @@ class NetflixCatalogoLatamProvider : MainAPI() {
             else -> emptyList()
         }
 
-        val results = dedupeMainPage(raw).mapNotNull { it.toNetflixSearchResponse(horizontal) }
+        val isTop10 = request.data == "top10global" || request.data == "top10mexico"
+        val results = if (isTop10) {
+            raw.mapNotNull { it.toNetflixSearchResponse(horizontal) }
+        } else {
+            dedupeMainPage(raw).mapNotNull { it.toNetflixSearchResponse(horizontal) }
+        }
 
         return newHomePageResponse(
             HomePageList(request.name, results, horizontal),
-            hasNext = results.isNotEmpty()
+            hasNext = !isTop10 && results.isNotEmpty()
         )
     }
 
@@ -551,6 +566,48 @@ class NetflixCatalogoLatamProvider : MainAPI() {
         ).text
         tmdbCache[key] = TmdbCacheEntry(now, body)
         return body
+    }
+
+    private suspend fun top10Section(url: String): List<TmdbNetflixResult> {
+        return fetchTop10Titles(url).mapNotNull { title -> searchTop10Title(title) }
+    }
+
+    private suspend fun fetchTop10Titles(url: String): List<String> {
+        return try {
+            val doc = app.get(
+                url,
+                headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+                referer = "https://www.netflix.com/",
+            ).document
+            doc.select("[data-uia=top10-table-row-title] button").mapNotNull {
+                it.text().trim().takeIf { t -> t.isNotBlank() }
+            }
+        } catch (e: Exception) {
+            logError(e)
+            emptyList()
+        }
+    }
+
+    private suspend fun searchTop10Title(title: String): TmdbNetflixResult? {
+        val movies = parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/search/movie",
+                buildMap {
+                    put("query", title)
+                }
+            )
+        ).results.orEmpty()
+        movies.firstOrNull()?.let { return it }
+
+        val series = parseJson<TmdbNetflixPageResult>(
+            tmdbGet(
+                "/search/tv",
+                buildMap {
+                    put("query", title)
+                }
+            )
+        ).results.orEmpty()
+        return series.firstOrNull()
     }
 
     private suspend fun discoverMovies(
