@@ -35,9 +35,11 @@ data class RtvcImageContainer(
     @JsonProperty("cover_desktop") val coverDesktop: RtvcImagePath? = null,
     @JsonProperty("cover_mobile") val coverMobile: RtvcImagePath? = null,
     @JsonProperty("poster") val poster: RtvcImagePath? = null,
-    @JsonProperty("cover") val cover: RtvcImagePath? = null
+    @JsonProperty("cover") val cover: RtvcImagePath? = null,
+    @JsonProperty("banner") val banner: RtvcImagePath? = null,
+    @JsonProperty("banner_mobile") val bannerMobile: RtvcImagePath? = null
 ) {
-    fun getUrl(): String? = (poster?.path ?: coverDesktop?.path ?: cover?.path ?: coverMobile?.path)?.let {
+    fun getUrl(): String? = (poster?.path ?: coverDesktop?.path ?: cover?.path ?: banner?.path ?: coverMobile?.path ?: bannerMobile?.path)?.let {
         if (it.startsWith("//")) "https:$it" else it
     }
 }
@@ -102,9 +104,10 @@ class RTVCPlayProvider : MainAPI() {
 
     private fun extractState(html: String): RtvcState? {
         val startStr = "window.__RTVCPLAY_STATE__ = "
-        val idx = html.find(startStr)
+        val idx = html.indexOf(startStr)
         if (idx == -1) return null
-        val jsonStr = html.substring(idx + startStr.length).substringBefore(";</script>").trim().removeSuffix(";")
+        val after = html.substring(idx + startStr.length)
+        val jsonStr = after.substringBefore("</script>").trim().removeSuffix(";")
         return try {
             parseJson<RtvcState>(jsonStr)
         } catch (_: Exception) {
@@ -112,11 +115,9 @@ class RTVCPlayProvider : MainAPI() {
         }
     }
 
-    private fun String.find(sub: String): Int = this.indexOf(sub)
-
     private fun RtvcWidgetItem.toSearchResponse(): SearchResponse? {
-        val itemTitle = title ?: return null
-        val itemSlug = slug ?: return null
+        val itemTitle = title?.takeIf { it.isNotBlank() } ?: subtitle?.takeIf { it.isNotBlank() } ?: return null
+        val itemSlug = slug ?: subtitleSlug ?: return null
         val poster = image?.getUrl()
         val url = if (itemSlug.startsWith("http")) itemSlug else "$mainUrl$itemSlug"
         val unitary = isUnitary ?: (contentType == "video" || contentType == "movie")
