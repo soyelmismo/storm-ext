@@ -162,19 +162,26 @@ class RetroTVEProvider : MainAPI() {
         val htmlText = response.text
         val document = response.document
 
-        val trembedRegex = Regex("""https?://retrotve\.com/\?trembed=\d+[^"'<\s]+""")
-        val rawMatches = trembedRegex.findAll(htmlText).map { it.value }.toList()
-        val trembedLinks = rawMatches.map {
-            it.replace("&#038;", "&")
+        val trembedRegex = Regex("""https?://retrotve\.com/\?trembed=\d+[^"'\s<>]+""")
+        val trembedLinks = trembedRegex.findAll(htmlText).map { match ->
+            match.value
+                .replace("&#038;", "&")
                 .replace("&amp;", "&")
-                .replace(";", "")
-        }.distinct()
+                .substringBefore("\"")
+                .substringBefore("'")
+                .substringBefore("&quot;")
+                .substringBefore(";")
+                .trim()
+        }.filter { it.isNotBlank() }.distinct().toList()
 
-        val iframeLinks = document.select("iframe").mapNotNull { it.attr("src").takeIf { s -> s.isNotBlank() } }
+        val iframeLinks = document.select("iframe, div.TPlayerTb iframe, div[id*=Opt] iframe")
+            .mapNotNull { it.attr("src").takeIf { s -> s.isNotBlank() } }
+
         val allSources = (trembedLinks + iframeLinks).distinct()
 
         allSources.amap { sourceUrl ->
-            val cleanSource = if (sourceUrl.startsWith("//")) "https:$sourceUrl" else sourceUrl
+            var cleanSource = sourceUrl.trim()
+            if (cleanSource.startsWith("//")) cleanSource = "https:$cleanSource"
             if (cleanSource.contains("trembed=")) {
                 try {
                     val trembedDoc = app.get(cleanSource, referer = data, headers = headers).document
@@ -182,13 +189,21 @@ class RetroTVEProvider : MainAPI() {
                         var iframeSrc = iframe.attr("src").trim()
                         if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
                         if (iframeSrc.isNotBlank()) {
-                            loadExtractor(iframeSrc, data, subtitleCallback, callback)
+                            if (iframeSrc.contains("yourupload.com")) {
+                                YourUpload().getUrl(iframeSrc, cleanSource, subtitleCallback, callback)
+                            } else {
+                                loadExtractor(iframeSrc, cleanSource, subtitleCallback, callback)
+                            }
                         }
                     }
                 } catch (_: Exception) {
                 }
             } else {
-                loadExtractor(cleanSource, data, subtitleCallback, callback)
+                if (cleanSource.contains("yourupload.com")) {
+                    YourUpload().getUrl(cleanSource, data, subtitleCallback, callback)
+                } else {
+                    loadExtractor(cleanSource, data, subtitleCallback, callback)
+                }
             }
         }
 
