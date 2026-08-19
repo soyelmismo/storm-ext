@@ -79,10 +79,15 @@ class RetroTVEProvider : MainAPI() {
             ?: document.selectFirst("meta[property='og:title']")?.attr("content")?.substringBefore(" - Retro")?.trim()
             ?: return null
 
-        val poster = document.selectFirst(".Image img, .poster img, img[src*=uploads]")?.let { img ->
+        val poster = document.selectFirst(".Image figure img, .Image img, figure.wp-block-image img, .wp-post-image:not(.attachment-widget):not(.custom-logo)")?.let { img ->
             val src = img.attr("src").ifEmpty { img.attr("data-src") }
             if (src.startsWith("//")) "https:$src" else fixUrl(src)
-        } ?: document.selectFirst("meta[property='og:image']")?.attr("content")
+        } ?: document.selectFirst("meta[property='og:image']")?.attr("content")?.let { if (it.startsWith("//")) "https:$it" else fixUrl(it) }
+
+        val background = document.selectFirst(".TPostBg img, img.TPostBg")?.let { img ->
+            val src = img.attr("src").ifEmpty { img.attr("data-src") }
+            if (src.startsWith("//")) "https:$src" else fixUrl(src)
+        } ?: poster
 
         val plot = document.selectFirst(".Description, .entry-content, .sinopsis, div.wp-content p")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
@@ -106,6 +111,11 @@ class RetroTVEProvider : MainAPI() {
                         ?: row.select("td").getOrNull(2)?.text()?.trim()?.takeIf { it.isNotEmpty() }
                         ?: "Episodio"
 
+                    val epThumb = row.selectFirst("td.MvTbImg img, a.MvTbImg img, td img")?.let { img ->
+                        val src = img.attr("src").ifEmpty { img.attr("data-src") }
+                        if (src.startsWith("//")) "https:$src" else fixUrl(src)
+                    } ?: poster
+
                     val seasonEpisodeMatch = Regex("-(\\d+)x(\\d+)").find(epHref)
                     val seasonNum = seasonEpisodeMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
                     val epNum = seasonEpisodeMatch?.groupValues?.get(2)?.toIntOrNull()
@@ -116,7 +126,7 @@ class RetroTVEProvider : MainAPI() {
                             this.name = epName
                             this.season = seasonNum
                             this.episode = epNum
-                            this.posterUrl = poster
+                            this.posterUrl = epThumb
                         }
                     )
                 }
@@ -142,14 +152,14 @@ class RetroTVEProvider : MainAPI() {
 
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster
+                this.backgroundPosterUrl = background
                 this.plot = plot
                 this.tags = tags
             }
         } else {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = poster
+                this.backgroundPosterUrl = background
                 this.plot = plot
                 this.tags = tags
             }
