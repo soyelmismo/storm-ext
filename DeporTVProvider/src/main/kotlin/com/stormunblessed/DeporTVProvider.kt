@@ -484,6 +484,12 @@ class DeporTVProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        if (cachedEvents.isEmpty()) {
+            try {
+                getMainPage(1, MainPageRequest(name = name, data = ""))
+            } catch (_: Exception) {
+            }
+        }
         return cachedEvents
             .filter { it.title.contains(query, ignoreCase = true) }
             .map { it.toSearchResult() }

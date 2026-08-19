@@ -88,10 +88,20 @@ class TioAnimeProvider : MainAPI() {
     )
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val response = app.post("$mainUrl/api/search",
-            data = mapOf("value" to query)
+        val response = app.post(
+            "$mainUrl/api/search",
+            data = mapOf("value" to query),
+            headers = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to "$mainUrl/"
+            )
         ).text
-        val json = parseJson<List<SearchObject>>(response)
+        val json = try {
+            parseJson<List<SearchObject>>(response)
+        } catch (_: Exception) {
+            emptyList()
+        }
         return json.map { searchr ->
             newAnimeSearchResponse(
                 searchr.title,

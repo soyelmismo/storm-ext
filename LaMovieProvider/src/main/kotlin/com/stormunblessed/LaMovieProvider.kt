@@ -27,6 +27,10 @@ class LaMovieProvider : MainAPI() {
 
     private val apiUrl = "$mainUrl/wp-api/v1"
     private val imageUrl = "$mainUrl/wp-content/uploads"
+    private val apiHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer" to "$mainUrl/"
+    )
 
     override val mainPage = mainPageOf(
         "movies&orderBy=latest" to "Peliculas",
@@ -40,7 +44,8 @@ class LaMovieProvider : MainAPI() {
         val postType = request.data.substringBefore("&")
         val orderBy = request.data.substringAfter("&orderBy=", "latest")
         val res = app.get(
-            "$apiUrl/listing/$postType?page=$page&orderBy=$orderBy&order=desc&postType=$postType&postsPerPage=20"
+            "$apiUrl/listing/$postType?page=$page&orderBy=$orderBy&order=desc&postType=$postType&postsPerPage=20",
+            headers = apiHeaders
         ).parsedSafe<LaMovieListingResponse>()
         val posts = res?.data?.posts ?: emptyList()
         val hasNext = (res?.data?.pagination?.currentPage ?: 1) < (res?.data?.pagination?.lastPage ?: 1)
@@ -73,8 +78,10 @@ class LaMovieProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val res = app.get("$apiUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&postType=any&postsPerPage=26")
-            .parsedSafe<LaMovieListingResponse>()
+        val res = app.get(
+            "$apiUrl/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}&postType=any&postsPerPage=26",
+            headers = apiHeaders
+        ).parsedSafe<LaMovieListingResponse>()
         return res?.data?.posts?.mapNotNull { it.toSearchResult() } ?: emptyList()
     }
 
@@ -87,7 +94,7 @@ class LaMovieProvider : MainAPI() {
             "novelas" -> "novels"
             else -> "movies"
         }
-        val res = app.get("$apiUrl/single/$postType?slug=$slug&postType=$postType")
+        val res = app.get("$apiUrl/single/$postType?slug=$slug&postType=$postType", headers = apiHeaders)
             .parsedSafe<LaMovieSingleResponse>() ?: return null
         val post = res.data ?: return null
         val postId = post.id ?: return null
@@ -102,7 +109,8 @@ class LaMovieProvider : MainAPI() {
         return if (isTvShow) {
             val episodes = mutableListOf<Episode>()
             val firstSeasonRes = app.get(
-                "$apiUrl/single/episodes/list?_id=$postId&season=1&page=1&postsPerPage=200"
+                "$apiUrl/single/episodes/list?_id=$postId&season=1&page=1&postsPerPage=200",
+                headers = apiHeaders
             ).parsedSafe<LaMovieEpisodesResponse>()
             val seasons = firstSeasonRes?.data?.seasons ?: listOf("1")
             firstSeasonRes?.data?.posts?.forEach { ep ->
@@ -119,7 +127,8 @@ class LaMovieProvider : MainAPI() {
             for (seasonNum in seasons) {
                 if (seasonNum == "1") continue
                 val episodesRes = app.get(
-                    "$apiUrl/single/episodes/list?_id=$postId&season=$seasonNum&page=1&postsPerPage=200"
+                    "$apiUrl/single/episodes/list?_id=$postId&season=$seasonNum&page=1&postsPerPage=200",
+                    headers = apiHeaders
                 ).parsedSafe<LaMovieEpisodesResponse>()
                 episodesRes?.data?.posts?.forEach { ep ->
                     episodes.add(
@@ -158,7 +167,7 @@ class LaMovieProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val postId = if (data.contains("|")) data.substringAfter("|") else data
-        val playerRes = app.get("$apiUrl/player?postId=$postId&demo=0")
+        val playerRes = app.get("$apiUrl/player?postId=$postId&demo=0", headers = apiHeaders)
             .parsedSafe<LaMoviePlayerResponse>() ?: return false
         val embeds = playerRes.data?.embeds?.takeIf { it.isNotEmpty() } ?: return false
 

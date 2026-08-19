@@ -78,22 +78,28 @@ class DocumaniaTVProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.post("$mainUrl/ajax_search.php",
+        val document = app.post(
+            "$mainUrl/ajax_search.php",
             data = mapOf("queryString" to query),
             headers = mapOf(
                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "X-Requested-With" to "XMLHttpRequest"
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to "$mainUrl/"
             )
         ).document
         return document.select("li").mapNotNull { element ->
             val link = element.selectFirst("a") ?: return@mapNotNull null
-            val href = link.attr("abs:href")
-            if (href.isEmpty() || !href.contains("video_")) return@mapNotNull null
-            val title = link.text().trim()
-            val videoId = element.attr("data-video-id").ifEmpty {
-                href.substringAfter("video_").substringBefore(".")
+            val href = link.attr("abs:href").ifEmpty {
+                val rel = link.attr("href")
+                if (rel.startsWith("http")) rel else "$mainUrl$rel"
             }
-            val poster = "$mainUrl/uploads/thumbs/$videoId-1.webp"
+            if (href.isEmpty() || href == mainUrl) return@mapNotNull null
+            val title = link.text().trim().takeIf { it.isNotEmpty() } ?: element.text().trim()
+            if (title.isEmpty()) return@mapNotNull null
+            val videoId = element.attr("data-video-id").ifEmpty {
+                if (href.contains("video_")) href.substringAfter("video_").substringBefore(".") else ""
+            }
+            val poster = if (videoId.isNotEmpty()) "$mainUrl/uploads/thumbs/$videoId-1.webp" else null
             newMovieSearchResponse(title, href, TvType.Documentary) {
                 this.posterUrl = poster
             }
