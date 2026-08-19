@@ -161,21 +161,22 @@ class RetroTVEProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val response = app.get(data, headers = headers)
-        val htmlText = response.text
-        val document = response.document
+        val rawHtml = response.text
+        val unescapedHtml = rawHtml
+            .replace("&amp;", "&")
+            .replace("&#038;", "&")
+            .replace("&quot;", "\"")
 
-        val trembedRegex = Regex("""https?://retrotve\.com/\?trembed=\d+[^"'\s<>]+""")
-        val trembedLinks = trembedRegex.findAll(htmlText).map { match ->
+        val trembedRegex = Regex("""https?://retrotve\.com/\?trembed=\d+&[^\s"'\<\>]+""")
+        val trembedLinks = trembedRegex.findAll(unescapedHtml).map { match ->
             match.value
-                .replace("&#038;", "&")
-                .replace("&amp;", "&")
                 .substringBefore("\"")
                 .substringBefore("'")
-                .substringBefore("&quot;")
-                .substringBefore(";")
+                .trimEnd('&')
                 .trim()
         }.filter { it.isNotBlank() }.distinct().toList()
 
+        val document = response.document
         val iframeLinks = document.select("iframe, div.TPlayerTb iframe, div[id*=Opt] iframe")
             .mapNotNull { it.attr("src").takeIf { s -> s.isNotBlank() } }
 
