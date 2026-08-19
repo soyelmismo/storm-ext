@@ -290,42 +290,48 @@ class DeporTVProvider : MainAPI() {
     )
 
     suspend fun followRedirects(url: String): String {
-        val jsRedirectRegex = Regex("""window\.location\.href\s*=\s*"([^"]+)";""")
-        val res = app.get(url, timeout = 5, allowRedirects = false)
-        val data = res.document.data()
-        val jsRedirectUrl = jsRedirectRegex.find(data)?.groupValues?.get(1)
-        if (jsRedirectUrl != null) {
-            return jsRedirectUrl
-        }
-        val metaRedirectUrl =
-            res.document.selectFirst("head meta[http-equiv=refresh]")?.attr("content")
-                ?.substringAfter("url=")
-        if (metaRedirectUrl != null) {
-            return metaRedirectUrl
-        }
-        try {
-            return app.get(url, timeout = 5, allowRedirects = true).url
-        } catch (e: Exception) {
-            return url;
+        return try {
+            val jsRedirectRegex = Regex("""window\.location\.href\s*=\s*"([^"]+)";""")
+            val res = app.get(url, timeout = 5, allowRedirects = false)
+            val data = res.document.data()
+            val jsRedirectUrl = jsRedirectRegex.find(data)?.groupValues?.get(1)
+            if (jsRedirectUrl != null) {
+                return jsRedirectUrl
+            }
+            val metaRedirectUrl =
+                res.document.selectFirst("head meta[http-equiv=refresh]")?.attr("content")
+                    ?.substringAfter("url=")
+            if (metaRedirectUrl != null) {
+                return metaRedirectUrl
+            }
+            app.get(url, timeout = 5, allowRedirects = true).url
+        } catch (_: Exception) {
+            url
         }
     }
 
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        streamedInfo.init()
+        try {
+            streamedInfo.init()
+        } catch (_: Exception) {
+        }
         val agendaData = sites.amap {
             try {
-                var url = ""
-                if (it.agendaUrl.startsWith("http")) {
-                    url = it.agendaUrl
+                val url = if (it.agendaUrl.startsWith("http")) {
+                    it.agendaUrl
                 } else {
-                    val mainUrl = followRedirects(it.mainUrl)
-                    url = mainUrl + it.agendaUrl
+                    val mainUrl = try {
+                        followRedirects(it.mainUrl)
+                    } catch (_: Exception) {
+                        it.mainUrl
+                    }
+                    mainUrl + it.agendaUrl
                 }
-                var res: NiceResponse? = null;
+                var res: NiceResponse? = null
                 try {
                     res = app.get(url, timeout = 5, referer = it.mainUrl)
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                 }
                 var events: List<EventData> = emptyList()
                 if (res != null) {

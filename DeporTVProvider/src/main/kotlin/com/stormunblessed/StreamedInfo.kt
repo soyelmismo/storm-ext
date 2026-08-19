@@ -12,9 +12,12 @@ class StreamedInfo {
     var matches: MatchesResult = MatchesResult();
 
     suspend fun init() {
-        val res = app.get("$mainUrl/api/matches/all")
-        // val res = app.get("$mainUrl/api/matches/live")
-        this.matches = res.parsed<MatchesResult>()
+        try {
+            val res = app.get("$mainUrl/api/matches/all", timeout = 5)
+            this.matches = res.parsed<MatchesResult>()
+        } catch (_: Exception) {
+            this.matches = MatchesResult()
+        }
     }
 
     private val translation = mapOf(
