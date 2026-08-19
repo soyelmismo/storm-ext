@@ -3,8 +3,10 @@ package com.stormunblessed
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.stormunblessed.extractors.VkExtractor
 import com.stormunblessed.extractors.YourUpload
 import org.jsoup.nodes.Element
+
 
 
 class RetroTVEProvider : MainAPI() {
@@ -192,20 +194,32 @@ class RetroTVEProvider : MainAPI() {
                         var iframeSrc = iframe.attr("src").trim()
                         if (iframeSrc.startsWith("//")) iframeSrc = "https:$iframeSrc"
                         if (iframeSrc.isNotBlank()) {
-                            if (iframeSrc.contains("yourupload.com")) {
-                                YourUpload().getUrl(iframeSrc, cleanSource, subtitleCallback, callback)
-                            } else {
-                                loadExtractor(iframeSrc, cleanSource, subtitleCallback, callback)
+                            when {
+                                iframeSrc.contains("yourupload.com") -> {
+                                    YourUpload().getUrl(iframeSrc, cleanSource, subtitleCallback, callback)
+                                }
+                                iframeSrc.contains("vk.com") || iframeSrc.contains("vkvideo.ru") -> {
+                                    VkExtractor().getUrl(iframeSrc, cleanSource, subtitleCallback, callback)
+                                }
+                                else -> {
+                                    loadExtractor(iframeSrc, cleanSource, subtitleCallback, callback)
+                                }
                             }
                         }
                     }
                 } catch (_: Exception) {
                 }
             } else {
-                if (cleanSource.contains("yourupload.com")) {
-                    YourUpload().getUrl(cleanSource, data, subtitleCallback, callback)
-                } else {
-                    loadExtractor(cleanSource, data, subtitleCallback, callback)
+                when {
+                    cleanSource.contains("yourupload.com") -> {
+                        YourUpload().getUrl(cleanSource, data, subtitleCallback, callback)
+                    }
+                    cleanSource.contains("vk.com") || cleanSource.contains("vkvideo.ru") -> {
+                        VkExtractor().getUrl(cleanSource, data, subtitleCallback, callback)
+                    }
+                    else -> {
+                        loadExtractor(cleanSource, data, subtitleCallback, callback)
+                    }
                 }
             }
         }
