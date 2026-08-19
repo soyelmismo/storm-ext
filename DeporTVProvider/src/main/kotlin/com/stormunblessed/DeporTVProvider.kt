@@ -486,7 +486,7 @@ class DeporTVProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         if (cachedEvents.isEmpty()) {
             try {
-                getMainPage(1, MainPageRequest(name = name, data = ""))
+                getMainPage(1, MainPageRequest(name = name, data = "", horizontalImages = true))
             } catch (_: Exception) {
             }
         }
