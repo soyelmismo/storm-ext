@@ -80,39 +80,53 @@ class MonoschinosProvider : MainAPI() {
     )
 
     override suspend fun load(url: String): LoadResponse? {
-        val resp = app.get(url, timeout = 120)
+        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        val resp = app.get(url, timeout = 120, headers = mapOf("User-Agent" to userAgent, "Referer" to "$mainUrl/"))
         val doc = resp.document
         val cookies = resp.cookies
 
-        val title = doc.selectFirst("h1.fs-2")?.text() ?: return null
+        val title = doc.selectFirst("h1")?.text()?.trim()
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.substringBefore(" - MonosChinos")?.trim()
+            ?: return null
         val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")
-        val backimage = doc.selectFirst("img[style*='blur']")?.attr("data-src")
-        val plot = doc.selectFirst("#profile-tab-pane p")?.text() ?: doc.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: doc.selectFirst("img[data-src]")?.attr("data-src")
+        val backimage = doc.selectFirst("img[style*='blur']")?.attr("data-src") ?: poster
+        val plot = doc.selectFirst("div#tab-info p, #profile-tab-pane p, div.sinopsis p, div.description p")?.text()?.trim()
+            ?: doc.selectFirst("meta[property=og:description]")?.attr("content")
 
-        val typeText = doc.select("div.col-12.col-md-3 dl dd").firstOrNull()?.text() ?: ""
+        val typeText = doc.select("div.col-12.col-md-3 dl dd, span.badge, .anime-type").text()
         val tvType = when {
-            typeText.contains("Pelicula") -> TvType.AnimeMovie
-            typeText.contains("OVA") || typeText.contains("Especial") -> TvType.OVA
+            typeText.contains("Pelicula", ignoreCase = true) -> TvType.AnimeMovie
+            typeText.contains("OVA", ignoreCase = true) || typeText.contains("Especial", ignoreCase = true) -> TvType.OVA
             else -> TvType.Anime
         }
 
-        val tags = doc.select("a[href^='/genero/'] span.badge").map { it.text() }
+        val tags = doc.select("a[href*='/genero/']").map { it.text().trim() }.filter { it.isNotBlank() }
 
         val status = when {
-            doc.text().contains("Estreno") -> ShowStatus.Ongoing
+            doc.text().contains("Estreno") || doc.text().contains("En emisión") -> ShowStatus.Ongoing
             doc.text().contains("Finalizado") -> ShowStatus.Completed
             else -> null
         }
 
-        val token = doc.selectFirst("meta[name=csrf-token]")?.attr("content") ?: ""
-        val caplistUrl = doc.selectFirst("section.caplist")?.attr("data-ajax") ?: ""
+        val caplistUrl = doc.selectFirst("section.caplist, .caplist, [data-ajax]")?.attr("data-ajax") ?: ""
 
-        val episodes = if (caplistUrl.isNotBlank() && token.isNotBlank()) {
+        val episodes = if (caplistUrl.isNotBlank()) {
             try {
-                val capJson = app.post(caplistUrl, data = mapOf("_token" to token), cookies = cookies).parsed<CapList>()
-                capJson.eps.mapNotNull { ep ->
+                val capJson = app.get(
+                    caplistUrl,
+                    headers = mapOf(
+                        "User-Agent" to userAgent,
+                        "Referer" to url,
+                        "X-Requested-With" to "XMLHttpRequest"
+                    ),
+                    cookies = cookies
+                ).parsedSafe<CapList>()
+                val eps = capJson?.eps ?: emptyList()
+                eps.mapNotNull { ep ->
                     val epNum = ep.num ?: return@mapNotNull null
-                    val epUrl = url.replace("-sub-espanol", "").replace("/anime/", "/ver/") + "-episodio-$epNum"
+                    val cleanBase = url.substringBefore("?").replace("-sub-espanol", "").replace("/anime/", "/ver/")
+                    val epUrl = "$cleanBase-episodio-$epNum"
                     newEpisode(epUrl) {
                         this.episode = epNum
                     }
@@ -126,7 +140,7 @@ class MonoschinosProvider : MainAPI() {
 
         return newAnimeLoadResponse(title, url, tvType) {
             this.posterUrl = poster
-            this.backgroundPosterUrl = backimage ?: poster
+            this.backgroundPosterUrl = backimage
             this.plot = plot
             this.tags = tags
             this.showStatus = status
@@ -140,9 +154,11 @@ class MonoschinosProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val doc = app.get(data).document
-        doc.select("button.play-video").amap {
-            val url = base64Decode(it.attr("data-player"))
+        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        val doc = app.get(data, headers = mapOf("User-Agent" to userAgent, "Referer" to "$mainUrl/")).document
+        doc.select("button.play-video, button[data-player]").amap {
+            val encoded = it.attr("data-player").takeIf { p -> p.isNotBlank() } ?: return@amap
+            val url = base64Decode(encoded)
             loadExtractor(url, "$mainUrl/", subtitleCallback, callback)
         }
         return true
