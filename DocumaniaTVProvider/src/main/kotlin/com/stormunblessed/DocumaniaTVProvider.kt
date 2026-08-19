@@ -170,52 +170,62 @@ class DocumaniaTVProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         val pageResponse = app.get(data, headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent" to userAgent,
+            "Referer" to "$mainUrl/"
         ))
         val document = pageResponse.document
         
         val videoDataScript = document.select("script").firstOrNull { script ->
             script.html().contains("pm_video_data")
-        }?.html() ?: return false
+        }?.html()
 
-        val videoId = Regex("""uniq_id:\s*"([^"]+)"""").find(videoDataScript)?.groupValues?.get(1) ?: return false
+        val videoId = if (videoDataScript != null) {
+            Regex("""uniq_id:\s*"([^"]+)"""").find(videoDataScript)?.groupValues?.get(1)
+        } else null ?: if (data.contains("video_")) {
+            data.substringAfter("video_").substringBefore(".")
+        } else null ?: return false
 
-        val embedResponse = app.get("https://www.documaniatv.com/embed/$videoId", headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        val pageCookies = pageResponse.cookies.map { "${it.key}=${it.value}" }.joinToString("; ")
+
+        val embedUrl = "$mainUrl/embed/$videoId"
+        val embedResponse = app.get(embedUrl, headers = mapOf(
+            "User-Agent" to userAgent,
+            "Referer" to data,
+            "Cookie" to pageCookies
         ))
-        val embedCookies = embedResponse.headers.filter { it.first.lowercase() == "set-cookie" }
-            .map { it.second.substringBefore(";") }
-            .joinToString("; ")
+        val embedCookiesMap = mutableMapOf<String, String>()
+        embedCookiesMap.putAll(pageResponse.cookies)
+        embedCookiesMap.putAll(embedResponse.cookies)
+        val allCookies = embedCookiesMap.map { "${it.key}=${it.value}" }.joinToString("; ")
 
-        val jsonResponse = app.get("https://www.documaniatv.com/json/$videoId",
+        val jsonResponse = app.get("$mainUrl/json/$videoId",
             headers = mapOf(
-                "Referer" to "https://www.documaniatv.com/embed/$videoId",
+                "Referer" to embedUrl,
                 "X-Requested-With" to "XMLHttpRequest",
-                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Cookie" to embedCookies
+                "User-Agent" to userAgent,
+                "Cookie" to allCookies
             )
         ).text
 
-        var videoUrl = Regex(""""src"\s*:\s*"([^"]+)"""").find(jsonResponse)?.groupValues?.get(1)
-            ?: Regex("""file:\s*"([^"]+)"""").find(jsonResponse)?.groupValues?.get(1)
+        var videoUrl = Regex("""\"(?:file|src)\"\s*:\s*\"([^\"]+)\"""").find(jsonResponse)?.groupValues?.get(1)
             ?: Regex("""https?://[^\s"']+\.mp4[^\s"']*""").find(jsonResponse)?.value
 
         if (videoUrl == null) {
-            val playerJsResponse = app.get("https://www.documaniatv.com/docuplayer/v1/$videoId.js",
+            val playerJsResponse = app.get("$mainUrl/docuplayer/v1/$videoId.js",
                 headers = mapOf(
-                    "Referer" to "https://www.documaniatv.com/embed/$videoId",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Cookie" to embedCookies
+                    "Referer" to embedUrl,
+                    "User-Agent" to userAgent,
+                    "Cookie" to allCookies
                 )
             ).text
-            videoUrl = Regex(""""src"\s*:\s*"([^"]+)"""").find(playerJsResponse)?.groupValues?.get(1)
-                ?: Regex("""file:\s*"([^"]+)"""").find(playerJsResponse)?.groupValues?.get(1)
+            videoUrl = Regex("""\"(?:file|src)\"\s*:\s*\"([^\"]+)\"""").find(playerJsResponse)?.groupValues?.get(1)
                 ?: Regex("""https?://[^\s"']+\.mp4[^\s"']*""").find(playerJsResponse)?.value
         }
 
         if (videoUrl != null) {
-            videoUrl = videoUrl.replace("\\/", "/")
+            videoUrl = videoUrl.replace("&amp;", "&").replace("\\/", "/")
             callback.invoke(
                 newExtractorLink(
                     source = name,
@@ -226,12 +236,13 @@ class DocumaniaTVProvider : MainAPI() {
                     this.quality = Qualities.P720.value
                     this.headers = mapOf(
                         "Referer" to "$mainUrl/",
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent" to userAgent
                     )
                 }
             )
+            return true
         }
 
-        return videoUrl != null
+        return false
     }
 }
