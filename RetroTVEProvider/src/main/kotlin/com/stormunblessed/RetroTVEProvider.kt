@@ -50,7 +50,7 @@ class RetroTVEProvider : MainAPI() {
         val title = this.selectFirst("h2, h3, .Title, .entry-title")?.text()?.trim()
             ?: a.attr("title").takeIf { it.isNotBlank() }
             ?: return null
-        val img = this.selectFirst("img")
+        val img = this.selectFirst("figure img, .Image img, img:not(.custom-logo)")
         val poster = img?.attr("src")?.takeIf { it.isNotBlank() }
             ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
         val fixedPoster = poster?.let { if (it.startsWith("//")) "https:$it" else fixUrl(it) }
@@ -82,7 +82,8 @@ class RetroTVEProvider : MainAPI() {
         val poster = document.selectFirst(".Image figure img, .Image img, figure.wp-block-image img, .wp-post-image:not(.attachment-widget):not(.custom-logo)")?.let { img ->
             val src = img.attr("src").ifEmpty { img.attr("data-src") }
             if (src.startsWith("//")) "https:$src" else fixUrl(src)
-        } ?: document.selectFirst("meta[property='og:image']")?.attr("content")?.let { if (it.startsWith("//")) "https:$it" else fixUrl(it) }
+        } ?: document.selectFirst("meta[name='twitter:image']")?.attr("content")?.let { if (it.startsWith("//")) "https:$it" else fixUrl(it) }
+          ?: document.selectFirst("meta[property='og:image']")?.attr("content")?.let { if (it.startsWith("//")) "https:$it" else fixUrl(it) }
 
         val background = document.selectFirst(".TPostBg img, img.TPostBg")?.let { img ->
             val src = img.attr("src").ifEmpty { img.attr("data-src") }
