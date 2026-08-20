@@ -92,6 +92,9 @@ class RetroTVEProvider : MainAPI() {
         val plot = document.selectFirst(".Description, .entry-content, .sinopsis, div.wp-content p")?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
 
+        val year = document.selectFirst(".Date, span.Date")?.text()?.trim()?.toIntOrNull()
+        val duration = document.selectFirst(".Time, span.Time")?.text()?.trim()
+
         val tags = document.select("a[href*='/category/']").map { it.text().trim() }.filter { it.isNotBlank() }
 
         val isSeries = url.contains("/serie/") || url.contains("/seriestv/")
@@ -155,6 +158,8 @@ class RetroTVEProvider : MainAPI() {
                 this.backgroundPosterUrl = background
                 this.plot = plot
                 this.tags = tags
+                this.year = year
+                addDuration(duration)
             }
         } else {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -162,6 +167,8 @@ class RetroTVEProvider : MainAPI() {
                 this.backgroundPosterUrl = background
                 this.plot = plot
                 this.tags = tags
+                this.year = year
+                addDuration(duration)
             }
         }
     }
