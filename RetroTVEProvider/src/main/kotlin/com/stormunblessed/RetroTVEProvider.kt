@@ -93,7 +93,11 @@ class RetroTVEProvider : MainAPI() {
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
 
         val year = document.selectFirst(".Date, span.Date")?.text()?.trim()?.toIntOrNull()
-        val duration = document.selectFirst(".Time, span.Time")?.text()?.trim()
+        val duration = document.selectFirst(".Time, span.Time")?.text()?.trim()?.let { timeStr ->
+            val h = Regex("(\\d+)\\s*h").find(timeStr)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val m = Regex("(\\d+)\\s*m").find(timeStr)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            (h * 60 + m).takeIf { it > 0 }
+        }
 
         val tags = document.select("a[href*='/category/']").map { it.text().trim() }.filter { it.isNotBlank() }
 
@@ -159,7 +163,7 @@ class RetroTVEProvider : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 this.year = year
-                addDuration(duration)
+                this.duration = duration
             }
         } else {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
@@ -168,7 +172,7 @@ class RetroTVEProvider : MainAPI() {
                 this.plot = plot
                 this.tags = tags
                 this.year = year
-                addDuration(duration)
+                this.duration = duration
             }
         }
     }
