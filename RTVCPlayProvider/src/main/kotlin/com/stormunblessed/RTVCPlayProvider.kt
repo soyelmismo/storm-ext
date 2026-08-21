@@ -70,10 +70,10 @@ data class RtvcWidgetItem(
     @JsonProperty("slug") val slug: String? = null,
     @JsonProperty("subtitle_slug") val subtitleSlug: String? = null,
     @JsonProperty("content_type") val contentType: String? = null,
-    @JsonProperty("is_unitary") val isUnitary: Boolean? = null,
-    @JsonProperty("season") val season: Int? = null,
-    @JsonProperty("chapter_number") val chapterNumber: Int? = null,
-    @JsonProperty("duration") val duration: String? = null,
+    @JsonProperty("is_unitary") val isUnitary: Any? = null,
+    @JsonProperty("season") val season: Any? = null,
+    @JsonProperty("chapter_number") val chapterNumber: Any? = null,
+    @JsonProperty("duration") val duration: Any? = null,
     @JsonProperty("image") val image: RtvcImageContainer? = null,
     @JsonProperty("contents") val contents: List<RtvcWidgetItem>? = null
 )
@@ -117,10 +117,10 @@ class RTVCPlayProvider : MainAPI() {
 
     private fun RtvcWidgetItem.toSearchResponse(): SearchResponse? {
         val itemTitle = title?.takeIf { it.isNotBlank() } ?: subtitle?.takeIf { it.isNotBlank() } ?: return null
-        val itemSlug = slug ?: subtitleSlug ?: return null
+        val itemSlug = slug?.takeIf { it.isNotBlank() } ?: subtitleSlug?.takeIf { it.isNotBlank() } ?: return null
         val poster = image?.getUrl()
         val url = if (itemSlug.startsWith("http")) itemSlug else "$mainUrl$itemSlug"
-        val unitary = isUnitary ?: (contentType == "video" || contentType == "movie")
+        val unitary = isUnitary?.toString()?.toBooleanStrictOrNull() ?: (contentType == "video" || contentType == "movie")
 
         return if (unitary) {
             newMovieSearchResponse(itemTitle, url, TvType.Movie) {
@@ -203,7 +203,7 @@ class RTVCPlayProvider : MainAPI() {
             widgets.filter { it.type == "seasonList" }.forEach { seasonWidget ->
                 val seasons = seasonWidget.contents ?: emptyList()
                 seasons.forEachIndexed { sIdx, sMap ->
-                    val seasonNum = sMap.season ?: (sIdx + 1)
+                    val seasonNum = sMap.season?.toString()?.toIntOrNull() ?: (sIdx + 1)
                     val chapters = sMap.contents ?: emptyList()
                     chapters.forEachIndexed { eIdx, chMap ->
                         val epTitle = chMap.title ?: "Episodio ${eIdx + 1}"
@@ -215,7 +215,7 @@ class RTVCPlayProvider : MainAPI() {
                             newEpisode(epUrl) {
                                 this.name = epTitle
                                 this.season = seasonNum
-                                this.episode = chMap.chapterNumber ?: (eIdx + 1)
+                                this.episode = chMap.chapterNumber?.toString()?.toIntOrNull() ?: (eIdx + 1)
                                 this.posterUrl = epCover
                             }
                         )
