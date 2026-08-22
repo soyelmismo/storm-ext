@@ -364,6 +364,8 @@ class PLProProvider : MainAPI() {
         }
     }
 
+    private val magmaGenUserAgent = "Dalvik/2.1.0 (Linux; U; Android 11; Mi A2 Lite Build/RD2A.211001.002)"
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -383,7 +385,7 @@ class PLProProvider : MainAPI() {
                     ),
                     headers = mapOf(
                         "Content-Type" to "application/x-www-form-urlencoded",
-                        "User-Agent" to userAgent
+                        "User-Agent" to magmaGenUserAgent
                     )
                 ).text.trim()
 
@@ -396,12 +398,32 @@ class PLProProvider : MainAPI() {
                         "User-Agent" to magmaUserAgent
                     )
 
-                    M3u8Helper.generateM3u8(
-                        this.name,
-                        fullM3u8Url,
-                        "$streamServer/",
-                        headers = secureHeaders
-                    ).forEach(callback)
+                    val m3u8Links = try {
+                        M3u8Helper.generateM3u8(
+                            this.name,
+                            fullM3u8Url,
+                            "$streamServer/",
+                            headers = secureHeaders
+                        )
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+
+                    if (m3u8Links.isNotEmpty()) {
+                        m3u8Links.forEach(callback)
+                    } else {
+                        callback(
+                            newExtractorLink(
+                                this.name,
+                                this.name,
+                                fullM3u8Url
+                            ) {
+                                this.type = ExtractorLinkType.M3U8
+                                this.referer = "$streamServer/"
+                                this.headers = secureHeaders
+                            }
+                        )
+                    }
                     return true
                 }
             }
