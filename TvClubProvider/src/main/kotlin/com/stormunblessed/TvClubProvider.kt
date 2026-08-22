@@ -276,7 +276,7 @@ class TvClubProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val path = url.removePrefix(mainUrl).trimStart(/)
+        val path = url.removePrefix(mainUrl).trimStart('/')
 
         when {
             path.startsWith("live/") -> {
