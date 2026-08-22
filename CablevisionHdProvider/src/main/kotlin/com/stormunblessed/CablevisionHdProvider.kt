@@ -365,10 +365,11 @@ class CablevisionHdProvider : MainAPI() {
                                 newExtractorLink(
                                     this.name,
                                     name,
-                                    streamUrl,
-                                    referer = fixedIframe,
-                                    type = ExtractorLinkType.M3U8
-                                )
+                                    streamUrl
+                                ) {
+                                    this.type = ExtractorLinkType.M3U8
+                                    this.referer = fixedIframe
+                                }
                             )
                         }
                     } else {
