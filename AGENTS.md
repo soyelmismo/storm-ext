@@ -70,3 +70,27 @@ Para analizar un sitio o diagnosticar un provider roto:
 - **Version Bump**: Siempre incrementar `version = X + 1` en `build.gradle.kts` del provider modificado.
 - **Unicidad de Plugins**: Garantizar exactamente un `@CloudstreamPlugin` por proyecto.
 - **Verificación en CI**: Tras hacer push a `origin/master`, monitorear el workflow de GitHub Actions con `gh run watch <id> --exit-status` hasta confirmar estado `success`.
+
+---
+
+## 6. Buenas Prácticas Críticas y Patrones Recurrentes
+1. **Tipado Defensivo en Modelos Jackson (`Any? = null`)**:
+   - Atributos aparentemente numéricos o booleanos en estados SSR o REST APIs (ej. `chapter_number`, `season`, `id`, `duration`, `is_unitary`) frecuentemente contienen cadenas de texto arbitrarias (ej. `"25 contenidos"`, `"3 Temporadas"`).
+   - **Regla**: Tipar siempre como `Any? = null` en las data classes y convertir en tiempo de ejecución con `.toString().toIntOrNull()` o `.toBooleanStrictOrNull()`. Esto previene fallos silenciosos de deserialización Jackson (`MismatchedInputException`) que dejan el landing/homepage vacío.
+
+2. **Prioridad de Títulos y Subtítulos en Capítulos**:
+   - En plataformas de series/TV, el campo `title` de los episodios suele contener textos genéricos (`"Capítulo 1"`), mientras que el título real se aloja en `subtitle` (`"Regreso a Colombia"`).
+   - **Regla**: Usar fallback prioritario: `ch.subtitle?.takeIf { it.isNotBlank() } ?: ch.title?.takeIf { it.isNotBlank() } ?: "Episodio ${idx + 1}"`.
+
+3. **Resolución de Portadas y Filtrado de Logos**:
+   - Evitar selectores genéricos de imágenes que atrapen el logo del sitio (`.custom-logo`, `.attachment-widget`).
+   - Priorizar `meta[name='twitter:image']` o `meta[property='og:image']` para portadas completas sin sufijos de recorte (`-185x278.webp`), y `.TPostBg img` para el fondo (`backgroundPosterUrl`).
+   - Extraer la miniatura individual de cada capítulo desde su celda (`td.MvTbImg img`, `a.MvTbImg img`) en lugar de heredar la portada general de la serie.
+
+4. **Migraciones de Grilla en Sitios Live TV**:
+   - Sitios de televisión en directo suelen convertir su raíz (`/`) en un landing publicitario con un solo botón y mover la parrilla de canales a `/parrilla-directo.php` o `/canales`. Si la raíz no contiene cards de canales, inspeccionar el botón principal de parrilla.
+
+5. **Streams Dinámicos HLS (`playlist.php` / Extractores Nativos)**:
+   - Scripts embebidos con `var src = "..."` apuntando a `playlist.php?id=...&sig=...` o `.m3u8` deben procesarse con `M3u8Helper.generateM3u8` preservando la cabecera `Referer` del reproductor embebido.
+   - En servidores de video externos como **VK / vkvideo.ru**, extraer directamente desde el objeto JSON `apiPrefetchCache` (`video.get`) para obtener MP4s multicalidad y listas HLS `hls_ondemand`.
+
