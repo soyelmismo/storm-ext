@@ -89,35 +89,50 @@ open class VidHidePro : ExtractorApi() {
 	        "User-Agent" to USER_AGENT,
         )
 
-        val response = app.get(getEmbedUrl(url), referer = referer)
+        val response = try {
+            app.get(getEmbedUrl(url), referer = referer)
+        } catch (_: Exception) {
+            try { app.get(url, referer = referer) } catch (_: Exception) { null }
+        } ?: return
+
         val script = if (!getPacked(response.text).isNullOrEmpty()) {
             var result = getAndUnpack(response.text)
-            if(result.contains("var links")){
+            if (result.contains("var links")) {
                 result = result.substringAfter("var links")
             }
             result
         } else {
-            response.document.selectFirst("script:containsData(sources:)")?.data()
-        } ?: return
+            response.document.selectFirst("script:containsData(sources:)")?.data() ?: response.text
+        }
 
-        // m3u8 urls could be prefixed by 'file:', 'hls2:' or 'hls4:', so we just match ':'
-        Regex(":\\s*\"(.*?m3u8.*?)\"").findAll(script).forEach { m3u8Match ->
-            M3u8Helper2.generateM3u8(
-                name,
-                fixUrl(m3u8Match.groupValues[1]),
-                referer = "$mainUrl/",
-                headers = headers
-            ).forEach(callback)
+        val m3u8Urls = Regex("""https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(script)
+            .map { it.value.replace("\\/", "/") }
+            .filter { it.startsWith("http") }
+            .distinct()
+            .toList()
+
+        for (m3u8 in m3u8Urls) {
+            try {
+                M3u8Helper2.generateM3u8(
+                    name,
+                    fixUrl(m3u8),
+                    referer = "$mainUrl/",
+                    headers = headers
+                ).forEach(callback)
+            } catch (_: Exception) {
+                callback(
+                    newExtractorLink(name, name, m3u8) {
+                        this.type = ExtractorLinkType.M3U8
+                        this.referer = "$mainUrl/"
+                        this.headers = headers
+                    }
+                )
+            }
         }
     }
 
     private fun getEmbedUrl(url: String): String {
-		return when {
-			url.contains("/d/") -> url.replace("/d/", "/v/")
-			url.contains("/download/") -> url.replace("/download/", "/v/")
-			url.contains("/file/") -> url.replace("/file/", "/v/")
-			else -> url.replace("/f/", "/v/")
-		}
-	}
-
+        val videoId = url.substringAfterLast("/").substringBefore("?").substringBefore("&")
+        return "$mainUrl/v/$videoId"
+    }
 }

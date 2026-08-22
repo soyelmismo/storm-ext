@@ -178,7 +178,11 @@ open class StreamWishExtractor : ExtractorApi() {
             "User-Agent" to USER_AGENT
         )
 
-        val pageResponse = app.get(resolveEmbedUrl(url), referer = referer)
+        val pageResponse = try {
+            app.get(resolveEmbedUrl(url), referer = referer)
+        } catch (_: Exception) {
+            try { app.get(url, referer = referer) } catch (_: Exception) { null }
+        } ?: return
 
         val playerScriptData = when {
             !getPacked(pageResponse.text).isNullOrEmpty() -> getAndUnpack(pageResponse.text)
@@ -186,57 +190,41 @@ open class StreamWishExtractor : ExtractorApi() {
                 pageResponse.document.select("script").firstOrNull {
                     it.html().contains("jwplayer(\"vplayer\").setup(")
                 }?.html()
-            else -> pageResponse.document.selectFirst("script:containsData(sources:)")?.data()
+            else -> pageResponse.document.selectFirst("script:containsData(sources:)")?.data() ?: pageResponse.text
         }
 
-        val directStreamUrl = playerScriptData?.let {
-            Regex(""""(.*?m3u8.*?)"""").find(it)?.groupValues?.getOrNull(1)
-        }
+        val m3u8Urls = Regex("""https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(playerScriptData)
+            .map { it.value.replace("\\/", "/") }
+            .filter { it.startsWith("http") }
+            .distinct()
+            .toList()
 
-        if (!directStreamUrl.isNullOrEmpty()) {
-            M3u8Helper.generateM3u8(
-                name,
-                directStreamUrl,
-                mainUrl,
-                headers = headers
-            ).forEach(callback)
-        } else {
-            val webViewM3u8Resolver = WebViewResolver(
-                interceptUrl = Regex("""txt|m3u8"""),
-                additionalUrls = listOf(Regex("""txt|m3u8""")),
-                useOkhttp = false,
-                timeout = 15_000L
-            )
-
-            val interceptedStreamUrl = app.get(
-                url,
-                referer = referer,
-                interceptor = webViewM3u8Resolver
-            ).url
-
-            if (interceptedStreamUrl.isNotEmpty()) {
-                M3u8Helper.generateM3u8(
-                    name,
-                    interceptedStreamUrl,
-                    mainUrl,
-                    headers = headers
-                ).forEach(callback)
-            } else {
-                Log.d("StreamwishExtractor", "No m3u8 found in fallback either.")
+        if (m3u8Urls.isNotEmpty()) {
+            for (directStreamUrl in m3u8Urls) {
+                try {
+                    M3u8Helper.generateM3u8(
+                        name,
+                        directStreamUrl,
+                        mainUrl,
+                        headers = headers
+                    ).forEach(callback)
+                } catch (_: Exception) {
+                    callback(
+                        newExtractorLink(name, name, directStreamUrl) {
+                            this.type = ExtractorLinkType.M3U8
+                            this.referer = "$mainUrl/"
+                            this.headers = headers
+                        }
+                    )
+                }
             }
         }
     }
 
     private fun resolveEmbedUrl(inputUrl: String): String {
-        return if (inputUrl.contains("/f/")) {
-            val videoId = inputUrl.substringAfter("/f/")
-            "$mainUrl/$videoId"
-        } else if (inputUrl.contains("/e/")) {
-            val videoId = inputUrl.substringAfter("/e/")
-            "$mainUrl/$videoId"
-        } else {
-            inputUrl
-        }
+        val videoId = inputUrl.substringAfterLast("/").substringBefore("?").substringBefore("&")
+        return "$mainUrl/e/$videoId"
     }
 }
+
 
