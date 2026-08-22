@@ -102,7 +102,7 @@ data class PLProLink(
 )
 
 class PLProProvider : MainAPI() {
-    override var mainUrl = "http://plpro.org"
+    override var mainUrl = "https://plpro.org"
     override var name = "PLPro"
     override var lang = "es"
 
@@ -300,7 +300,7 @@ class PLProProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val path = url.removePrefix(mainUrl).trimStart('/')
+        val path = url.removePrefix("https://plpro.org").removePrefix("http://plpro.org").removePrefix(mainUrl).trimStart('/')
 
         when {
             path.startsWith("live/") -> {
@@ -453,14 +453,13 @@ class PLProProvider : MainAPI() {
                     text
                 }
 
-                val m3u8Regex = Regex("""(?:file|source|sources|src|s2|s1)\s*[:=]\s*["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""")
-                val m3u8Url = m3u8Regex.find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
-                    ?: Regex("""["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""").find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+                val m3u8Url = Regex("""https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*""").find(unpacked)?.value?.replace("\\/", "/")
+                val mp4Url = if (m3u8Url == null) Regex("""https?:\\?/\\?/[^"'\s<>]+\.mp4[^"'\s<>]*""").find(unpacked)?.value?.replace("\\/", "/") else null
+
+                val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
+                val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
 
                 if (m3u8Url != null) {
-                    val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
-                    val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
-
                     val m3u8Links = try {
                         M3u8Helper.generateM3u8(
                             this.name,
@@ -496,6 +495,22 @@ class PLProProvider : MainAPI() {
                         linksEmitted = true
                     }
                     if (linksEmitted) return
+                } else if (mp4Url != null) {
+                    callback(
+                        newExtractorLink(
+                            this.name,
+                            label,
+                            mp4Url
+                        ) {
+                            this.referer = u
+                            this.headers = mapOf(
+                                "Referer" to u,
+                                "User-Agent" to USER_AGENT
+                            )
+                        }
+                    )
+                    linksEmitted = true
+                    return
                 }
             } catch (_: Exception) {
             }
