@@ -511,35 +511,43 @@ class TvClubProvider : MainAPI() {
                     return true
                 }
             }
-            data.startsWith("episode:") -> {
-                val parts = data.split(":")
-                if (parts.size >= 4) {
-                    val seriesId = parts[1]
-                    val season = parts[2]
-                    val epNum = parts[3]
-
-                    val res = app.get(
-                        "$mainUrl/player_api.php?$authQuery&action=get_episode_links&serie=$seriesId&season=$season&episode=$epNum",
-                        headers = mapOf("User-Agent" to userAgent)
-                    )
-                    val rawText = res.text
-                    val parsed = tryParseJson<Array<XtreamEpisodeLink>>(rawText)?.toList()
-                    val links = if (!parsed.isNullOrEmpty()) parsed else {
-                        Regex("""\{"id":[^,]+,"url":"([^"]+)"(?:,"quality":"([^"]*)")?(?:,"language":"([^"]*)")?""").findAll(rawText).map { m ->
-                            XtreamEpisodeLink(
-                                url = m.groupValues[1].replace("\\/", "/"),
-                                quality = m.groupValues.getOrNull(2),
-                                language = m.groupValues.getOrNull(3)
-                            )
-                        }.toList()
+            data.startsWith("episode:") || data.contains("serie=") || (data.count { it == ':' } >= 2) -> {
+                val cleanData = data.removePrefix("episode:").trim()
+                val (seriesId, season, epNum) = when {
+                    cleanData.contains("serie=") -> {
+                        val sid = cleanData.substringAfter("serie=").substringBefore("&")
+                        val s = cleanData.substringAfter("season=").substringBefore("&")
+                        val e = cleanData.substringAfter("episode=").substringBefore("&")
+                        Triple(sid, s, e)
                     }
-
-                    links.amap { linkObj ->
-                        val linkUrl = linkObj.url ?: return@amap
-                        resolveEmbedLink(linkUrl, linkObj.quality, linkObj.language, subtitleCallback, callback)
+                    cleanData.contains(":") -> {
+                        val parts = cleanData.split(":")
+                        Triple(parts[0], parts.getOrNull(1) ?: "1", parts.getOrNull(2) ?: "1")
                     }
-                    return true
+                    else -> Triple(cleanData, "1", "1")
                 }
+
+                val res = app.get(
+                    "$mainUrl/player_api.php?$authQuery&action=get_episode_links&serie=$seriesId&season=$season&episode=$epNum",
+                    headers = mapOf("User-Agent" to userAgent)
+                )
+                val rawText = res.text
+                val parsed = tryParseJson<Array<XtreamEpisodeLink>>(rawText)?.toList()
+                val links = if (!parsed.isNullOrEmpty()) parsed else {
+                    Regex("""\{"id":[^,]+,"url":"([^"]+)"(?:,"quality":"([^"]*)")?(?:,"language":"([^"]*)")?""").findAll(rawText).map { m ->
+                        XtreamEpisodeLink(
+                            url = m.groupValues[1].replace("\\/", "/"),
+                            quality = m.groupValues.getOrNull(2),
+                            language = m.groupValues.getOrNull(3)
+                        )
+                    }.toList()
+                }
+
+                links.amap { linkObj ->
+                    val linkUrl = linkObj.url ?: return@amap
+                    resolveEmbedLink(linkUrl, linkObj.quality, linkObj.language, subtitleCallback, callback)
+                }
+                return true
             }
         }
         return false

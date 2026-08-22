@@ -616,35 +616,41 @@ class PLProProvider : MainAPI() {
                 }
                 return true
             }
-            data.startsWith("episode:") -> {
-                val parts = data.split(":")
-                if (parts.size >= 4) {
-                    val seriesId = parts[1]
-                    val season = parts[2]
-                    val epNum = parts[3]
-
-                    val res = app.get(
-                        "$mainUrl/series/$seriesId/links/$season/$epNum?$authQuery",
-                        headers = mapOf("User-Agent" to userAgent)
-                    )
-                    val rawText = res.text
-                    val parsed = tryParseJson<Array<PLProLink>>(rawText)?.toList()
-                    val links = if (!parsed.isNullOrEmpty()) parsed else {
-                        Regex("""\{"a":"([^"]+)"(?:,"b":"([^"]*)")?(?:,"c":"([^"]*)")?""").findAll(rawText).map { m ->
-                            PLProLink(
-                                url = m.groupValues[1].replace("\\/", "/"),
-                                language = m.groupValues.getOrNull(2),
-                                quality = m.groupValues.getOrNull(3)
-                            )
-                        }.toList()
+            data.startsWith("episode:") || data.contains("series/") || (data.count { it == ':' } >= 2) -> {
+                val cleanData = data.removePrefix("episode:").trim()
+                val (seriesId, season, epNum) = when {
+                    cleanData.contains("series/") -> {
+                        val segs = cleanData.substringAfter("series/").substringBefore("?").split("/")
+                        Triple(segs[0], segs.getOrNull(2) ?: "1", segs.getOrNull(3) ?: "1")
                     }
-
-                    links.amap { linkObj ->
-                        val linkUrl = linkObj.url ?: return@amap
-                        resolveEmbedLink(linkUrl, linkObj.quality, linkObj.language, subtitleCallback, callback)
+                    cleanData.contains(":") -> {
+                        val parts = cleanData.split(":")
+                        Triple(parts[0], parts.getOrNull(1) ?: "1", parts.getOrNull(2) ?: "1")
                     }
-                    return true
+                    else -> Triple(cleanData, "1", "1")
                 }
+
+                val res = app.get(
+                    "$mainUrl/series/$seriesId/links/$season/$epNum?$authQuery",
+                    headers = mapOf("User-Agent" to userAgent)
+                )
+                val rawText = res.text
+                val parsed = tryParseJson<Array<PLProLink>>(rawText)?.toList()
+                val links = if (!parsed.isNullOrEmpty()) parsed else {
+                    Regex("""\{"a":"([^"]+)"(?:,"b":"([^"]*)")?(?:,"c":"([^"]*)")?""").findAll(rawText).map { m ->
+                        PLProLink(
+                            url = m.groupValues[1].replace("\\/", "/"),
+                            language = m.groupValues.getOrNull(2),
+                            quality = m.groupValues.getOrNull(3)
+                        )
+                    }.toList()
+                }
+
+                links.amap { linkObj ->
+                    val linkUrl = linkObj.url ?: return@amap
+                    resolveEmbedLink(linkUrl, linkObj.quality, linkObj.language, subtitleCallback, callback)
+                }
+                return true
             }
         }
         return false
