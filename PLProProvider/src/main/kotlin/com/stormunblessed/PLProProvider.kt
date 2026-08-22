@@ -9,6 +9,9 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.getPacked
+import com.lagradost.cloudstream3.utils.getAndUnpack
+import java.net.URI
 
 data class PLProChannelRoot(
     @JsonProperty("channels") val channels: List<PLProChannelItem>? = null,
@@ -368,6 +371,70 @@ class PLProProvider : MainAPI() {
 
     private val magmaGenUserAgent = "Dalvik/2.1.0 (Linux; U; Android 11; Mi A2 Lite Build/RD2A.211001.002)"
 
+    private suspend fun resolveEmbedLink(
+        linkUrl: String,
+        quality: String?,
+        language: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val loaded = loadExtractor(linkUrl, subtitleCallback, callback)
+        if (!loaded) {
+            try {
+                val response = app.get(
+                    linkUrl,
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer" to "$mainUrl/"
+                    )
+                )
+
+                val text = response.text
+                val unpacked = if (!getPacked(text).isNullOrEmpty()) {
+                    getAndUnpack(text)
+                } else {
+                    text
+                }
+
+                val m3u8Regex = """(?:file|source|sources|src)\s*[:=]\s*["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""".toRegex()
+                val m3u8Url = m3u8Regex.find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+                    ?: Regex("""["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""").find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+
+                if (m3u8Url != null) {
+                    val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
+                    val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
+
+                    val m3u8Links = try {
+                        M3u8Helper.generateM3u8(
+                            label,
+                            m3u8Url,
+                            linkUrl,
+                            headers = mapOf("Referer" to linkUrl)
+                        )
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+
+                    if (m3u8Links.isNotEmpty()) {
+                        m3u8Links.forEach(callback)
+                    } else {
+                        callback(
+                            newExtractorLink(
+                                label,
+                                label,
+                                m3u8Url
+                            ) {
+                                this.type = ExtractorLinkType.M3U8
+                                this.referer = linkUrl
+                            }
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -438,7 +505,7 @@ class PLProProvider : MainAPI() {
 
                 links.amap { linkObj ->
                     val linkUrl = linkObj.url ?: return@amap
-                    loadExtractor(linkUrl, subtitleCallback, callback)
+                    resolveEmbedLink(linkUrl, linkObj.quality, linkObj.language, subtitleCallback, callback)
                 }
                 return true
             }
@@ -456,7 +523,7 @@ class PLProProvider : MainAPI() {
 
                     links.amap { linkObj ->
                         val linkUrl = linkObj.url ?: return@amap
-                        loadExtractor(linkUrl, subtitleCallback, callback)
+                        resolveEmbedLink(linkUrl, linkObj.quality, linkObj.language, subtitleCallback, callback)
                     }
                     return true
                 }
