@@ -378,73 +378,126 @@ class PLProProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val loaded = loadExtractor(linkUrl, subtitleCallback, callback)
-        if (!loaded) {
-            val embedCode = linkUrl.substringAfterLast("/")
-            val urlsToTry = mutableListOf(linkUrl)
-            if (linkUrl.contains("streamwish.") || linkUrl.contains("hlsflex.") || linkUrl.contains("hgplaycdn.") || linkUrl.contains("do7go.")) {
-                urlsToTry.add(0, "https://streamwish.top/e/$embedCode")
+        var linksEmitted = false
+        val interceptCallback: (ExtractorLink) -> Unit = { link ->
+            linksEmitted = true
+            callback(link)
+        }
+
+        try {
+            loadExtractor(linkUrl, subtitleCallback, interceptCallback)
+        } catch (_: Exception) {
+        }
+
+        if (linksEmitted) return
+
+        val embedCode = linkUrl.substringAfterLast("/").substringBefore("?").substringBefore("&")
+        val urlsToTry = mutableListOf<String>()
+
+        when {
+            linkUrl.contains("streamwish") || linkUrl.contains("hlsflex") || linkUrl.contains("hgplaycdn") || linkUrl.contains("do7go") -> {
+                urlsToTry.add("https://streamwish.top/e/$embedCode")
                 urlsToTry.add("https://flaswish.com/e/$embedCode")
+                urlsToTry.add("https://hlswish.com/e/$embedCode")
+                urlsToTry.add("https://embedwish.com/e/$embedCode")
             }
+            linkUrl.contains("vidhide") -> {
+                urlsToTry.add("https://vidhidefast.com/v/$embedCode")
+                urlsToTry.add("https://vidhidepre.com/v/$embedCode")
+                urlsToTry.add("https://vidhidepro.com/v/$embedCode")
+            }
+            linkUrl.contains("voe") -> {
+                urlsToTry.add("https://voe.sx/e/$embedCode")
+            }
+            else -> {
+                urlsToTry.add(linkUrl)
+            }
+        }
 
-            for (u in urlsToTry) {
+        for (u in urlsToTry) {
+            if (u != linkUrl) {
                 try {
-                    val response = app.get(
-                        u,
-                        headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Referer" to "$mainUrl/"
-                        )
-                    )
-
-                    val text = response.text
-                    if (text.length < 900 && (text.contains("Page is loading") || text.contains("Redirecting"))) {
-                        continue
-                    }
-
-                    val unpacked = if (!getPacked(text).isNullOrEmpty()) {
-                        getAndUnpack(text)
-                    } else {
-                        text
-                    }
-
-                    val m3u8Regex = """(?:file|source|sources|src)\s*[:=]\s*["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""".toRegex()
-                    val m3u8Url = m3u8Regex.find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
-                        ?: Regex("""["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""").find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
-
-                    if (m3u8Url != null) {
-                        val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
-                        val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
-
-                        val m3u8Links = try {
-                            M3u8Helper.generateM3u8(
-                                label,
-                                m3u8Url,
-                                u,
-                                headers = mapOf("Referer" to u)
-                            )
-                        } catch (_: Exception) {
-                            emptyList()
-                        }
-
-                        if (m3u8Links.isNotEmpty()) {
-                            m3u8Links.forEach(callback)
-                        } else {
-                            callback(
-                                newExtractorLink(
-                                    label,
-                                    label,
-                                    m3u8Url
-                                ) {
-                                    this.type = ExtractorLinkType.M3U8
-                                    this.referer = u
-                                }
-                            )
-                        }
-                        return
-                    }
+                    loadExtractor(u, subtitleCallback, interceptCallback)
+                    if (linksEmitted) return
                 } catch (_: Exception) {
                 }
+            }
+        }
+
+        for (u in (urlsToTry + linkUrl).distinct()) {
+            try {
+                val response = app.get(
+                    u,
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer" to "$mainUrl/"
+                    )
+                )
+
+                val text = response.text
+                if (text.length < 900 && (text.contains("Page is loading") || text.contains("Redirecting"))) {
+                    val redir = Regex("""window\.location\.href\s*=\s*['"](https?://[^'"]+)['"]""").find(text)?.groupValues?.get(1)
+                    if (redir != null) {
+                        try {
+                            loadExtractor(redir, subtitleCallback, interceptCallback)
+                            if (linksEmitted) return
+                        } catch (_: Exception) {
+                        }
+                    }
+                    continue
+                }
+
+                val unpacked = if (!getPacked(text).isNullOrEmpty()) {
+                    getAndUnpack(text)
+                } else {
+                    text
+                }
+
+                val m3u8Regex = Regex("""(?:file|source|sources|src|s2|s1)\s*[:=]\s*["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""")
+                val m3u8Url = m3u8Regex.find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+                    ?: Regex("""["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""").find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+
+                if (m3u8Url != null) {
+                    val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
+                    val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
+
+                    val m3u8Links = try {
+                        M3u8Helper.generateM3u8(
+                            label,
+                            m3u8Url,
+                            u,
+                            headers = mapOf(
+                                "Referer" to u,
+                                "User-Agent" to USER_AGENT
+                            )
+                        )
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+
+                    if (m3u8Links.isNotEmpty()) {
+                        m3u8Links.forEach(callback)
+                        linksEmitted = true
+                    } else {
+                        callback(
+                            newExtractorLink(
+                                label,
+                                label,
+                                m3u8Url
+                            ) {
+                                this.type = ExtractorLinkType.M3U8
+                                this.referer = u
+                                this.headers = mapOf(
+                                    "Referer" to u,
+                                    "User-Agent" to USER_AGENT
+                                )
+                            }
+                        )
+                        linksEmitted = true
+                    }
+                    if (linksEmitted) return
+                }
+            } catch (_: Exception) {
             }
         }
     }
