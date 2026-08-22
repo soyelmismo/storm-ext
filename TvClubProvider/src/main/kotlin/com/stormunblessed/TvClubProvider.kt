@@ -5,7 +5,9 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 
 data class XtreamCategory(
@@ -101,26 +103,59 @@ class TvClubProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val homePages = mutableListOf<HomePageList>()
 
-        // 1. Live Categories & Streams
-        try {
-            val liveCategories = app.get(
-                "$mainUrl/player_api.php?$authQuery&action=get_live_categories",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamCategory>>() ?: emptyList()
+        val liveCategories = app.get(
+            "$mainUrl/player_api.php?$authQuery&action=get_live_categories",
+            headers = mapOf("User-Agent" to userAgent)
+        ).parsedSafe<List<XtreamCategory>>() ?: emptyList()
 
-            val liveStreams = app.get(
-                "$mainUrl/player_api.php?$authQuery&action=get_live_streams",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamStream>>() ?: emptyList()
+        val liveStreams = app.get(
+            "$mainUrl/player_api.php?$authQuery&action=get_live_streams",
+            headers = mapOf("User-Agent" to userAgent)
+        ).parsedSafe<List<XtreamStream>>() ?: emptyList()
 
-            val topCategories = listOf("Mas vistos", "Nacionales", "Deportes", "Cine 24/7", "Peliculas", "Infantiles", "Entretenimiento")
-            for (catName in topCategories) {
-                val catObj = liveCategories.find { it.categoryName?.equals(catName, ignoreCase = true) == true }
-                val catIdStr = catObj?.categoryId?.toString()
-                val filtered = if (catIdStr != null) {
-                    liveStreams.filter { it.categoryId?.toString() == catIdStr }
-                } else emptyList()
+        val categoryOrder = listOf(
+            "Mas vistos",
+            "Nacionales",
+            "HD",
+            "Cine 24/7",
+            "24/7",
+            "Deportes",
+            "Peliculas",
+            "Infantiles",
+            "Entretenimiento",
+            "Musica",
+            "Noticias",
+            "Documentales"
+        )
 
+        for (catName in categoryOrder) {
+            val catObj = liveCategories.find { it.categoryName?.equals(catName, ignoreCase = true) == true }
+            val catIdStr = catObj?.categoryId?.toString()
+            val filtered = if (catIdStr != null) {
+                liveStreams.filter { it.categoryId?.toString() == catIdStr }
+            } else emptyList()
+
+            if (filtered.isNotEmpty()) {
+                val searchResponses = filtered.map { stream ->
+                    val id = stream.streamId?.toString() ?: ""
+                    newLiveSearchResponse(
+                        stream.name ?: "Canal",
+                        "$mainUrl/live/$id",
+                        TvType.Live
+                    ) {
+                        this.posterUrl = fixPoster(stream.streamIcon)
+                    }
+                }
+                homePages.add(HomePageList("En Vivo: $catName", searchResponses, isHorizontalImages = true))
+            }
+        }
+
+        // Add remaining live categories
+        liveCategories.forEach { cat ->
+            val cName = cat.categoryName ?: return@forEach
+            if (!categoryOrder.any { it.equals(cName, ignoreCase = true) }) {
+                val cId = cat.categoryId?.toString()
+                val filtered = liveStreams.filter { it.categoryId?.toString() == cId }
                 if (filtered.isNotEmpty()) {
                     val searchResponses = filtered.map { stream ->
                         val id = stream.streamId?.toString() ?: ""
@@ -132,70 +167,23 @@ class TvClubProvider : MainAPI() {
                             this.posterUrl = fixPoster(stream.streamIcon)
                         }
                     }
-                    homePages.add(HomePageList("En Vivo: $catName", searchResponses, isHorizontalImages = true))
+                    homePages.add(HomePageList("En Vivo: $cName", searchResponses, isHorizontalImages = true))
                 }
             }
-
-            if (homePages.isEmpty() && liveStreams.isNotEmpty()) {
-                val allLive = liveStreams.take(50).map { stream ->
-                    val id = stream.streamId?.toString() ?: ""
-                    newLiveSearchResponse(
-                        stream.name ?: "Canal",
-                        "$mainUrl/live/$id",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = fixPoster(stream.streamIcon)
-                    }
-                }
-                homePages.add(HomePageList("Canales en Vivo", allLive, isHorizontalImages = true))
-            }
-        } catch (_: Exception) {
         }
 
-        // 2. VOD Movies Top
-        try {
-            val vodStreams = app.get(
-                "$mainUrl/player_api.php?$authQuery&action=get_vod_streams",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamStream>>() ?: emptyList()
-
-            if (vodStreams.isNotEmpty()) {
-                val recentVods = vodStreams.take(30).map { vod ->
-                    val id = vod.streamId?.toString() ?: ""
-                    newMovieSearchResponse(
-                        vod.name ?: "Película",
-                        "$mainUrl/movie/$id",
-                        TvType.Movie
-                    ) {
-                        this.posterUrl = fixPoster(vod.streamIcon)
-                    }
+        if (homePages.isEmpty() && liveStreams.isNotEmpty()) {
+            val allLive = liveStreams.map { stream ->
+                val id = stream.streamId?.toString() ?: ""
+                newLiveSearchResponse(
+                    stream.name ?: "Canal",
+                    "$mainUrl/live/$id",
+                    TvType.Live
+                ) {
+                    this.posterUrl = fixPoster(stream.streamIcon)
                 }
-                homePages.add(HomePageList("Películas VOD", recentVods))
             }
-        } catch (_: Exception) {
-        }
-
-        // 3. Series
-        try {
-            val series = app.get(
-                "$mainUrl/player_api.php?$authQuery&action=get_series",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamStream>>() ?: emptyList()
-
-            if (series.isNotEmpty()) {
-                val recentSeries = series.take(30).map { s ->
-                    val id = s.seriesId?.toString() ?: ""
-                    newTvSeriesSearchResponse(
-                        s.name ?: "Serie",
-                        "$mainUrl/series/$id",
-                        TvType.TvSeries
-                    ) {
-                        this.posterUrl = fixPoster(s.cover)
-                    }
-                }
-                homePages.add(HomePageList("Series", recentSeries))
-            }
-        } catch (_: Exception) {
+            homePages.add(HomePageList("Todos los Canales", allLive, isHorizontalImages = true))
         }
 
         if (homePages.isEmpty()) throw ErrorLoadingException()
@@ -222,50 +210,6 @@ class TvClubProvider : MainAPI() {
                         TvType.Live
                     ) {
                         this.posterUrl = fixPoster(stream.streamIcon)
-                    }
-                }
-            )
-        } catch (_: Exception) {
-        }
-
-        // Search VOD
-        try {
-            val vodStreams = app.get(
-                "$mainUrl/player_api.php?$authQuery&action=get_vod_streams",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamStream>>() ?: emptyList()
-
-            results.addAll(
-                vodStreams.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.take(25).map { vod ->
-                    val id = vod.streamId?.toString() ?: ""
-                    newMovieSearchResponse(
-                        vod.name ?: "Película",
-                        "$mainUrl/movie/$id",
-                        TvType.Movie
-                    ) {
-                        this.posterUrl = fixPoster(vod.streamIcon)
-                    }
-                }
-            )
-        } catch (_: Exception) {
-        }
-
-        // Search Series
-        try {
-            val series = app.get(
-                "$mainUrl/player_api.php?$authQuery&action=get_series",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamStream>>() ?: emptyList()
-
-            results.addAll(
-                series.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.take(25).map { s ->
-                    val id = s.seriesId?.toString() ?: ""
-                    newTvSeriesSearchResponse(
-                        s.name ?: "Serie",
-                        "$mainUrl/series/$id",
-                        TvType.TvSeries
-                    ) {
-                        this.posterUrl = fixPoster(s.cover)
                     }
                 }
             )
@@ -379,17 +323,36 @@ class TvClubProvider : MainAPI() {
                         "User-Agent" to magmaUserAgent
                     )
 
-                    M3u8Helper.generateM3u8(
-                        this.name,
-                        fullM3u8Url,
-                        "$mainUrl/",
-                        headers = secureHeaders
-                    ).forEach(callback)
+                    val m3u8Links = try {
+                        M3u8Helper.generateM3u8(
+                            this.name,
+                            fullM3u8Url,
+                            "$mainUrl/",
+                            headers = secureHeaders
+                        )
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+
+                    if (m3u8Links.isNotEmpty()) {
+                        m3u8Links.forEach(callback)
+                    } else {
+                        callback(
+                            newExtractorLink(
+                                this.name,
+                                this.name,
+                                fullM3u8Url
+                            ) {
+                                this.type = ExtractorLinkType.M3U8
+                                this.referer = "$mainUrl/"
+                                this.headers = secureHeaders
+                            }
+                        )
+                    }
                     return true
                 }
             }
             data.startsWith("episode:") -> {
-                // episode:seriesId:season:episodeNum
                 val parts = data.split(":")
                 if (parts.size >= 4) {
                     val seriesId = parts[1]
