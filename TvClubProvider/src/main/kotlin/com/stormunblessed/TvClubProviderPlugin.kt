@@ -54,9 +54,18 @@ class TvClubProviderPlugin: Plugin() {
         registerExtractorAPI(Swdyu())
         registerExtractorAPI(Wishonly())
         registerExtractorAPI(Playerwish())
-        registerExtractorAPI(StreamHLS())
+        registerExtractorAPI(Do7go())
         registerExtractorAPI(HlsWish())
         registerExtractorAPI(StreamWishExtractor())
+
+        // Byse extractors
+        registerExtractorAPI(ByseJikuar())
+        registerExtractorAPI(BysezoxexeCom())
+        registerExtractorAPI(Bysezejataos())
+        registerExtractorAPI(ByseBuho())
+        registerExtractorAPI(ByseVepoin())
+        registerExtractorAPI(ByseQekaho())
+        registerExtractorAPI(ByseSX())
     }
 }
 
