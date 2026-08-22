@@ -4,8 +4,10 @@ import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.JsUnpacker
+import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import java.net.URL
+
 
 class CablevisionHdProvider : MainAPI() {
 
@@ -166,37 +168,38 @@ class CablevisionHdProvider : MainAPI() {
     )
 
     val dos47Cat = setOf(
-        "24/7",
-    )
+        "24/    private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    private val headers = mapOf("User-Agent" to userAgent, "Referer" to "$mainUrl/")
 
     private fun channelText(el: org.jsoup.nodes.Element): String {
-        return el.selectFirst("p")?.text()?.trim() ?: ""
+        val pText = el.selectFirst("p")?.text()?.trim() ?: el.text().trim()
+        return pText.replace("EN VIVO", "", ignoreCase = true).trim()
     }
 
     private fun buildChannel(el: org.jsoup.nodes.Element): LiveSearchResponse? {
         val title = channelText(el)
-        if (title.isBlank()) return null
+        if (title.isBlank() || nowAllowed.any { title.contains(it, ignoreCase = true) }) return null
         val img = el.selectFirst("img")?.attr("src") ?: ""
-        val link = el.attr("href")
-        if (link.isBlank()) return null
+        val link = fixUrl(el.attr("href"))
+        if (link.isBlank() || link == mainUrl || link.endsWith("/redes/")) return null
         return newLiveSearchResponse(title, link, TvType.Live) {
             this.posterUrl = fixUrl(img)
         }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val doc = app.get(mainUrl).document
+        val doc = app.get("$mainUrl/parrilla-directo.php", headers = headers).document
         val allChannels = doc.select("a.channel-card").mapNotNull { el ->
             buildChannel(el)
-        }
+        }.distinctBy { it.url }
 
         val categoryMap = mapOf(
             "Deportes" to deportesCat,
             "Entretenimiento" to entretenimientoCat,
             "Noticias" to noticiasCat,
-            "Peliculas" to peliculasCat,
+            "Películas" to peliculasCat,
             "Infantil" to infantilCat,
-            "Educacion" to educacionCat,
+            "Educación" to educacionCat,
             "24/7" to dos47Cat,
         )
 
@@ -206,40 +209,35 @@ class CablevisionHdProvider : MainAPI() {
                 catSet.any { ch.name.contains(it, ignoreCase = true) }
             }
             if (filtered.isNotEmpty()) {
-                items.add(HomePageList(catName, filtered, true))
+                items.add(HomePageList(catName, filtered, isHorizontalImages = true))
             }
         }
 
-        items.add(HomePageList("Todos", allChannels, true))
+        items.add(HomePageList("Todos los Canales", allChannels, isHorizontalImages = true))
 
         if (items.isEmpty()) throw ErrorLoadingException()
         return newHomePageResponse(items)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val doc = app.get(mainUrl).document
+        val doc = app.get("$mainUrl/parrilla-directo.php", headers = headers).document
         return doc.select("a.channel-card").mapNotNull { el ->
             val title = channelText(el)
             if (title.isBlank()) return@mapNotNull null
             if (!title.contains(query, ignoreCase = true)) return@mapNotNull null
             if (nowAllowed.any { title.contains(it, ignoreCase = true) }) return@mapNotNull null
             buildChannel(el)
-        }
+        }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val doc = app.get(url).document
-        val poster =
-            doc.selectFirst("div.info-logo img")
-                ?.attr("src") ?: ""
-        val title =
-            doc.selectFirst("head meta[property=og:title]")
-                ?.attr("content")
-                ?: ""
-        val desc =
-            doc.selectFirst("head meta[property=og:description]")
-                ?.attr("content")
-                ?: ""
+        val doc = app.get(url, headers = headers).document
+        val poster = doc.selectFirst("div.info-logo img, .channel-logo img, img[src*=imge]")?.attr("src") ?: ""
+        val title = doc.selectFirst("head meta[property='og:title']")?.attr("content")
+            ?: doc.selectFirst("title")?.text()?.substringBefore(" - CABLEVISION")?.replace("▷", "")?.trim()
+            ?: "Canal en Vivo"
+        val desc = doc.selectFirst("head meta[property='og:description']")?.attr("content")
+            ?: "Transmisión en vivo por Cablevision HD"
 
         return newMovieLoadResponse(
             title,
@@ -257,74 +255,102 @@ class CablevisionHdProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        app.get(data).document.select("a.option[href*=\"/stream\"]").amap {
-            val streamLink = it.attr("href")
+        val doc = app.get(data, headers = headers).document
+        val optionLinks = doc.select("a.option[href*=\"/stream\"], a[href*=\"/stream\"]").mapNotNull {
+            val link = it.attr("href").takeIf { s -> s.isNotBlank() } ?: return@mapNotNull null
             val name = it.text().ifBlank { "Opción" }
-            val streamPage = app.get(
-                streamLink, headers = mapOf(
-                    "Host" to "www.cablevisionhd.com",
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:101.0) Gecko/20100101 Firefox/101.0",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language" to "en-US,en;q=0.5",
-                    "Referer" to data,
-                    "Alt-Used" to "www.cablevisionhd.com",
-                    "Connection" to "keep-alive",
-                    "Cookie" to "TawkConnectionTime=0; twk_idm_key=qMfE5UE9JTs3JUBCtVUR1",
-                    "Upgrade-Insecure-Requests" to "1",
-                    "Sec-Fetch-Dest" to "iframe",
-                    "Sec-Fetch-Mode" to "navigate",
-                    "Sec-Fetch-Site" to "same-origin",
-                )
-            ).document
-            val iframeSrc = streamPage.selectFirst("iframe")?.attr("src") ?: return@amap
-            val finalPage = app.get(
-                iframeSrc, headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:101.0) Gecko/20100101 Firefox/101.0",
-                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language" to "en-US,en;q=0.5",
-                    "Referer" to mainUrl,
-                    "Connection" to "keep-alive",
-                    "Upgrade-Insecure-Requests" to "1",
-                    "Sec-Fetch-Dest" to "iframe",
-                    "Sec-Fetch-Mode" to "navigate",
-                    "Sec-Fetch-Site" to "cross-site",
-                )
-            ).document
-            finalPage.select("script").amap {
-                val script = it.html()
-                when {
-                    script.contains("function(p,a,c,k,e,d)") -> {
-                        val jsUnpacker = JsUnpacker(script)
-                        if (jsUnpacker.detect()) {
-                            val regex = """MARIOCSCryptOld\("(.*?)"\)""".toRegex()
-                            val match = regex.find(jsUnpacker.unpack() ?: "")
-                            val hash = match?.groupValues?.get(1) ?: ""
-                            val extractedurl = decodeBase64UntilUnchanged(hash)
-                            if (extractedurl.isNotBlank()) {
-                                callback(newExtractorLink(name, name, extractedurl))
+            fixUrl(link) to name
+        }.toMutableList()
+
+        if (optionLinks.isEmpty()) {
+            doc.select("iframe[src*=\"stream\"], iframe[src*=\"core.php\"]").forEachIndexed { idx, ifr ->
+                val src = ifr.attr("src").takeIf { s -> s.isNotBlank() } ?: return@forEachIndexed
+                optionLinks.add(fixUrl(src) to "Opción ${idx + 1}")
+            }
+        }
+
+        optionLinks.distinctBy { it.first }.amap { (streamLink, name) ->
+            try {
+                val streamPage = app.get(
+                    streamLink,
+                    referer = data,
+                    headers = mapOf(
+                        "User-Agent" to userAgent,
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Referer" to data
+                    )
+                ).document
+                val iframeSrc = streamPage.selectFirst("iframe")?.attr("src") ?: return@amap
+                val fixedIframe = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else fixUrl(iframeSrc)
+
+                val finalPage = app.get(
+                    fixedIframe,
+                    referer = streamLink,
+                    headers = mapOf(
+                        "User-Agent" to userAgent,
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Referer" to streamLink
+                    )
+                ).document
+
+                finalPage.select("script").forEach { scriptTag ->
+                    val script = scriptTag.html()
+                    when {
+                        script.contains("var src = \"") -> {
+                            val url = script.substringAfter("var src = \"").substringBefore("\";")
+                                .replace("\\/", "/").replace("\\:", ":").trim()
+                            if (url.isNotBlank()) {
+                                if (url.contains(".m3u8") || url.contains("playlist.php")) {
+                                    M3u8Helper.generateM3u8(
+                                        this.name,
+                                        url,
+                                        fixedIframe,
+                                        headers = mapOf("Referer" to fixedIframe)
+                                    ).forEach(callback)
+                                } else {
+                                    callback(newExtractorLink(this.name, name, url))
+                                }
                             }
                         }
-                    }
-                    script.trim().startsWith("jwplayer.key = '") -> {
-                        val url = script.substringAfter("setupPlayer(\"").substringBefore("\");")
-                        callback(newExtractorLink(name, name, url))
-                    }
-                    script.trim().startsWith("var src = \"") -> {
-                        val url = fixUrl(
-                            script.substringAfter("var src = \"").substringBefore("\";")
-                                .replace("\\/", "/").replace("\\:", ":")
-                        )
-                        callback(newExtractorLink(name, name, url))
-                    }
-                    script.trim().startsWith("var playbackURL = ") -> {
-                        script.substringAfter("atob(\"").substringBefore("\")").let {
-                            val extractedurl = decodeBase64UntilUnchanged(it)
-                            if (extractedurl.isNotBlank()) {
-                                callback(newExtractorLink(name, name, extractedurl))
+                        script.contains("function(p,a,c,k,e,d)") -> {
+                            val jsUnpacker = JsUnpacker(script)
+                            if (jsUnpacker.detect()) {
+                                val unpacked = jsUnpacker.unpack() ?: ""
+                                val regex = """MARIOCSCryptOld\("(.*?)"\)""".toRegex()
+                                val match = regex.find(unpacked)
+                                val hash = match?.groupValues?.get(1) ?: ""
+                                val extractedurl = decodeBase64UntilUnchanged(hash)
+                                if (extractedurl.isNotBlank()) {
+                                    if (extractedurl.contains(".m3u8")) {
+                                        M3u8Helper.generateM3u8(
+                                            this.name,
+                                            extractedurl,
+                                            fixedIframe,
+                                            headers = mapOf("Referer" to fixedIframe)
+                                        ).forEach(callback)
+                                    } else {
+                                        callback(newExtractorLink(this.name, name, extractedurl))
+                                    }
+                                }
+                            }
+                        }
+                        script.contains("jwplayer.key = '") || script.contains("setupPlayer(\"") -> {
+                            val url = script.substringAfter("setupPlayer(\"").substringBefore("\");").trim()
+                            if (url.isNotBlank()) {
+                                callback(newExtractorLink(this.name, name, url))
+                            }
+                        }
+                        script.contains("var playbackURL = ") -> {
+                            script.substringAfter("atob(\"").substringBefore("\")").let {
+                                val extractedurl = decodeBase64UntilUnchanged(it)
+                                if (extractedurl.isNotBlank()) {
+                                    callback(newExtractorLink(this.name, name, extractedurl))
+                                }
                             }
                         }
                     }
                 }
+            } catch (_: Exception) {
             }
         }
         return true
