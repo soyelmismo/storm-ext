@@ -501,7 +501,7 @@ class PLProProvider : MainAPI() {
                 val links = app.get(
                     "$mainUrl/movies/$movieId/links?$authQuery",
                     headers = mapOf("User-Agent" to userAgent)
-                ).parsedSafe<List<PLProLink>>() ?: emptyList()
+                ).parsedSafe<Array<PLProLink>>()?.toList() ?: emptyList()
 
                 links.amap { linkObj ->
                     val linkUrl = linkObj.url ?: return@amap
@@ -519,7 +519,7 @@ class PLProProvider : MainAPI() {
                     val links = app.get(
                         "$mainUrl/series/$seriesId/links/$season/$epNum?$authQuery",
                         headers = mapOf("User-Agent" to userAgent)
-                    ).parsedSafe<List<PLProLink>>() ?: emptyList()
+                    ).parsedSafe<Array<PLProLink>>()?.toList() ?: emptyList()
 
                     links.amap { linkObj ->
                         val linkUrl = linkObj.url ?: return@amap

@@ -109,12 +109,12 @@ class TvClubProvider : MainAPI() {
         val liveCategories = app.get(
             "$mainUrl/player_api.php?$authQuery&action=get_live_categories",
             headers = mapOf("User-Agent" to userAgent)
-        ).parsedSafe<List<XtreamCategory>>() ?: emptyList()
+        ).parsedSafe<Array<XtreamCategory>>()?.toList() ?: emptyList()
 
         val liveStreams = app.get(
             "$mainUrl/player_api.php?$authQuery&action=get_live_streams",
             headers = mapOf("User-Agent" to userAgent)
-        ).parsedSafe<List<XtreamStream>>() ?: emptyList()
+        ).parsedSafe<Array<XtreamStream>>()?.toList() ?: emptyList()
 
         val categoryOrder = listOf(
             "Mas vistos",
@@ -202,7 +202,7 @@ class TvClubProvider : MainAPI() {
             val liveStreams = app.get(
                 "$mainUrl/player_api.php?$authQuery&action=get_live_streams",
                 headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<List<XtreamStream>>() ?: emptyList()
+            ).parsedSafe<Array<XtreamStream>>()?.toList() ?: emptyList()
 
             results.addAll(
                 liveStreams.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.map { stream ->
@@ -429,7 +429,7 @@ class TvClubProvider : MainAPI() {
                     val links = app.get(
                         "$mainUrl/player_api.php?$authQuery&action=get_episode_links&serie=$seriesId&season=$season&episode=$epNum",
                         headers = mapOf("User-Agent" to userAgent)
-                    ).parsedSafe<List<XtreamEpisodeLink>>() ?: emptyList()
+                    ).parsedSafe<Array<XtreamEpisodeLink>>()?.toList() ?: emptyList()
 
                     links.amap { linkObj ->
                         val linkUrl = linkObj.url ?: return@amap
