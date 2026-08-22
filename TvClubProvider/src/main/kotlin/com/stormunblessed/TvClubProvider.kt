@@ -518,10 +518,21 @@ class TvClubProvider : MainAPI() {
                     val season = parts[2]
                     val epNum = parts[3]
 
-                    val links = app.get(
+                    val res = app.get(
                         "$mainUrl/player_api.php?$authQuery&action=get_episode_links&serie=$seriesId&season=$season&episode=$epNum",
                         headers = mapOf("User-Agent" to userAgent)
-                    ).parsedSafe<Array<XtreamEpisodeLink>>()?.toList() ?: emptyList()
+                    )
+                    val rawText = res.text
+                    val parsed = tryParseJson<Array<XtreamEpisodeLink>>(rawText)?.toList()
+                    val links = if (!parsed.isNullOrEmpty()) parsed else {
+                        Regex("""\{"id":[^,]+,"url":"([^"]+)"(?:,"quality":"([^"]*)")?(?:,"language":"([^"]*)")?""").findAll(rawText).map { m ->
+                            XtreamEpisodeLink(
+                                url = m.groupValues[1].replace("\\/", "/"),
+                                quality = m.groupValues.getOrNull(2),
+                                language = m.groupValues.getOrNull(3)
+                            )
+                        }.toList()
+                    }
 
                     links.amap { linkObj ->
                         val linkUrl = linkObj.url ?: return@amap

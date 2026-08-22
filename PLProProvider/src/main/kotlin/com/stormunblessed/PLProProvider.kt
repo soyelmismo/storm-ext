@@ -594,10 +594,21 @@ class PLProProvider : MainAPI() {
             }
             data.startsWith("movie:") -> {
                 val movieId = data.substringAfter(":")
-                val links = app.get(
+                val res = app.get(
                     "$mainUrl/movies/$movieId/links?$authQuery",
                     headers = mapOf("User-Agent" to userAgent)
-                ).parsedSafe<Array<PLProLink>>()?.toList() ?: emptyList()
+                )
+                val rawText = res.text
+                val parsed = tryParseJson<Array<PLProLink>>(rawText)?.toList()
+                val links = if (!parsed.isNullOrEmpty()) parsed else {
+                    Regex("""\{"a":"([^"]+)"(?:,"b":"([^"]*)")?(?:,"c":"([^"]*)")?""").findAll(rawText).map { m ->
+                        PLProLink(
+                            url = m.groupValues[1].replace("\\/", "/"),
+                            language = m.groupValues.getOrNull(2),
+                            quality = m.groupValues.getOrNull(3)
+                        )
+                    }.toList()
+                }
 
                 links.amap { linkObj ->
                     val linkUrl = linkObj.url ?: return@amap
@@ -612,10 +623,21 @@ class PLProProvider : MainAPI() {
                     val season = parts[2]
                     val epNum = parts[3]
 
-                    val links = app.get(
+                    val res = app.get(
                         "$mainUrl/series/$seriesId/links/$season/$epNum?$authQuery",
                         headers = mapOf("User-Agent" to userAgent)
-                    ).parsedSafe<Array<PLProLink>>()?.toList() ?: emptyList()
+                    )
+                    val rawText = res.text
+                    val parsed = tryParseJson<Array<PLProLink>>(rawText)?.toList()
+                    val links = if (!parsed.isNullOrEmpty()) parsed else {
+                        Regex("""\{"a":"([^"]+)"(?:,"b":"([^"]*)")?(?:,"c":"([^"]*)")?""").findAll(rawText).map { m ->
+                            PLProLink(
+                                url = m.groupValues[1].replace("\\/", "/"),
+                                language = m.groupValues.getOrNull(2),
+                                quality = m.groupValues.getOrNull(3)
+                            )
+                        }.toList()
+                    }
 
                     links.amap { linkObj ->
                         val linkUrl = linkObj.url ?: return@amap
