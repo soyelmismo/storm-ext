@@ -38,7 +38,7 @@ data class XtreamStream(
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamSeriesDetails(
     @JsonProperty("info") val info: XtreamSeriesInfo? = null,
-    @JsonProperty("episodes") val episodes: Map<String, List<XtreamEpisode>>? = null
+    @JsonProperty("episodes") val episodes: Map<String, Array<XtreamEpisode>>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)

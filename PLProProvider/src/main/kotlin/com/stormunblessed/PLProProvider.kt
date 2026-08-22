@@ -16,8 +16,8 @@ import java.net.URI
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProChannelRoot(
-    @JsonProperty("channels") val channels: List<PLProChannelItem>? = null,
-    @JsonProperty("categories") val categories: List<PLProChannelCategory>? = null
+    @JsonProperty("channels") val channels: Array<PLProChannelItem>? = null,
+    @JsonProperty("categories") val categories: Array<PLProChannelCategory>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -31,14 +31,14 @@ data class PLProChannelItem(
     @JsonProperty("a") val id: Any? = null,
     @JsonProperty("b") val name: String? = null,
     @JsonProperty("c") val icon: String? = null,
-    @JsonProperty("e") val categoryIds: List<Any>? = null,
+    @JsonProperty("e") val categoryIds: Array<Any>? = null,
     @JsonProperty("g") val epg: String? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProMovieRoot(
-    @JsonProperty("movies") val movies: List<PLProMovieItem>? = null,
-    @JsonProperty("categories") val categories: List<PLProMovieCategory>? = null
+    @JsonProperty("movies") val movies: Array<PLProMovieItem>? = null,
+    @JsonProperty("categories") val categories: Array<PLProMovieCategory>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -53,7 +53,7 @@ data class PLProMovieItem(
     @JsonProperty("b") val name: String? = null,
     @JsonProperty("c") val poster: String? = null,
     @JsonProperty("f") val year: String? = null,
-    @JsonProperty("g") val categoryIds: List<Any>? = null,
+    @JsonProperty("g") val categoryIds: Array<Any>? = null,
     @JsonProperty("l") val quality: String? = null
 )
 
@@ -68,8 +68,8 @@ data class PLProMovieDetails(
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProSeriesRoot(
-    @JsonProperty("series") val series: List<PLProSeriesItem>? = null,
-    @JsonProperty("categories") val categories: List<PLProMovieCategory>? = null
+    @JsonProperty("series") val series: Array<PLProSeriesItem>? = null,
+    @JsonProperty("categories") val categories: Array<PLProMovieCategory>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -78,7 +78,7 @@ data class PLProSeriesItem(
     @JsonProperty("b") val name: String? = null,
     @JsonProperty("c") val poster: String? = null,
     @JsonProperty("d") val backdrop: String? = null,
-    @JsonProperty("g") val categoryIds: List<Any>? = null
+    @JsonProperty("g") val categoryIds: Array<Any>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -88,13 +88,13 @@ data class PLProSeriesDetails(
     @JsonProperty("poster") val poster: String? = null,
     @JsonProperty("backdrop") val backdrop: String? = null,
     @JsonProperty("overview") val overview: String? = null,
-    @JsonProperty("seasonList") val seasonList: List<PLProSeason>? = null
+    @JsonProperty("seasonList") val seasonList: Array<PLProSeason>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProSeason(
     @JsonProperty("num") val num: Any? = null,
-    @JsonProperty("episodes") val episodes: List<PLProEpisode>? = null
+    @JsonProperty("episodes") val episodes: Array<PLProEpisode>? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -348,12 +348,12 @@ class PLProProvider : MainAPI() {
                 val title = details.name ?: "Serie"
                 val poster = fixPoster(details.poster)
                 val backdrop = fixPoster(details.backdrop)
-                val seasonList = details.seasonList ?: emptyList()
+                val seasonList = details.seasonList?.toList() ?: emptyList()
                 val episodeList = mutableListOf<Episode>()
 
                 seasonList.forEach { seasonObj ->
                     val seasonNum = seasonObj.num?.toString()?.toIntOrNull() ?: 1
-                    val episodes = seasonObj.episodes ?: emptyList()
+                    val episodes = seasonObj.episodes?.toList() ?: emptyList()
                     episodes.forEachIndexed { idx, ep ->
                         val epNum = ep.episode?.toString()?.toIntOrNull() ?: ep.num?.toString()?.toIntOrNull() ?: (idx + 1)
                         val epName = ep.name ?: "Episodio $epNum"
