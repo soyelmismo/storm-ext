@@ -303,57 +303,71 @@ class TvClubProvider : MainAPI() {
     ) {
         val loaded = loadExtractor(linkUrl, subtitleCallback, callback)
         if (!loaded) {
-            try {
-                val response = app.get(
-                    linkUrl,
-                    headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Referer" to "$mainUrl/"
+            val embedCode = linkUrl.substringAfterLast("/")
+            val urlsToTry = mutableListOf(linkUrl)
+            if (linkUrl.contains("streamwish.") || linkUrl.contains("hlsflex.") || linkUrl.contains("hgplaycdn.") || linkUrl.contains("do7go.")) {
+                urlsToTry.add(0, "https://streamwish.top/e/$embedCode")
+                urlsToTry.add("https://flaswish.com/e/$embedCode")
+            }
+
+            for (u in urlsToTry) {
+                try {
+                    val response = app.get(
+                        u,
+                        headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                            "Referer" to "$mainUrl/"
+                        )
                     )
-                )
 
-                val text = response.text
-                val unpacked = if (!getPacked(text).isNullOrEmpty()) {
-                    getAndUnpack(text)
-                } else {
-                    text
-                }
-
-                val m3u8Regex = """(?:file|source|sources|src)\s*[:=]\s*["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""".toRegex()
-                val m3u8Url = m3u8Regex.find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
-                    ?: Regex("""["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""").find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
-
-                if (m3u8Url != null) {
-                    val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
-                    val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
-
-                    val m3u8Links = try {
-                        M3u8Helper.generateM3u8(
-                            label,
-                            m3u8Url,
-                            linkUrl,
-                            headers = mapOf("Referer" to linkUrl)
-                        )
-                    } catch (_: Exception) {
-                        emptyList()
+                    val text = response.text
+                    if (text.length < 900 && (text.contains("Page is loading") || text.contains("Redirecting"))) {
+                        continue
                     }
 
-                    if (m3u8Links.isNotEmpty()) {
-                        m3u8Links.forEach(callback)
+                    val unpacked = if (!getPacked(text).isNullOrEmpty()) {
+                        getAndUnpack(text)
                     } else {
-                        callback(
-                            newExtractorLink(
-                                label,
-                                label,
-                                m3u8Url
-                            ) {
-                                this.type = ExtractorLinkType.M3U8
-                                this.referer = linkUrl
-                            }
-                        )
+                        text
                     }
+
+                    val m3u8Regex = """(?:file|source|sources|src)\s*[:=]\s*["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""".toRegex()
+                    val m3u8Url = m3u8Regex.find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+                        ?: Regex("""["'](https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*)["']""").find(unpacked)?.groupValues?.get(1)?.replace("\\/", "/")
+
+                    if (m3u8Url != null) {
+                        val hostName = try { URI(linkUrl).host?.removePrefix("www.") ?: "Servidor" } catch (_: Exception) { "Servidor" }
+                        val label = "$hostName ${language ?: ""} ${quality ?: ""}".trim()
+
+                        val m3u8Links = try {
+                            M3u8Helper.generateM3u8(
+                                label,
+                                m3u8Url,
+                                u,
+                                headers = mapOf("Referer" to u)
+                            )
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+
+                        if (m3u8Links.isNotEmpty()) {
+                            m3u8Links.forEach(callback)
+                        } else {
+                            callback(
+                                newExtractorLink(
+                                    label,
+                                    label,
+                                    m3u8Url
+                                ) {
+                                    this.type = ExtractorLinkType.M3U8
+                                    this.referer = u
+                                }
+                            )
+                        }
+                        return
+                    }
+                } catch (_: Exception) {
                 }
-            } catch (_: Exception) {
             }
         }
     }
