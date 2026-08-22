@@ -56,6 +56,7 @@ class TvClubProviderPlugin: Plugin() {
         registerExtractorAPI(Playerwish())
         registerExtractorAPI(Do7go())
         registerExtractorAPI(HlsWish())
+        registerExtractorAPI(StreamwishTop())
         registerExtractorAPI(StreamWishExtractor())
 
         // Byse extractors

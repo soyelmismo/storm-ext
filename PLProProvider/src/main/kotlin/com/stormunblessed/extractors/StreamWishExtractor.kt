@@ -158,6 +158,11 @@ class HlsWish : StreamWishExtractor() {
     override val mainUrl = "https://hlswish.com"
 }
 
+class StreamwishTop : StreamWishExtractor() {
+    override var name = "Streamwish"
+    override var mainUrl = "https://streamwish.top"
+}
+
 open class StreamWishExtractor : ExtractorApi() {
     override val name = "Streamwish"
     override val mainUrl = "https://streamwish.to"
@@ -170,14 +175,8 @@ open class StreamWishExtractor : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val headers = mapOf(
-            "Accept" to "*/*",
-            "Connection" to "keep-alive",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "cross-site",
-            "Referer" to "$mainUrl/",
-            "Origin" to "$mainUrl/",
-            "User-Agent" to USER_AGENT
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to "$mainUrl/"
         )
 
         val pageResponse = try {
