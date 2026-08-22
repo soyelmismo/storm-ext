@@ -6,6 +6,10 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
 
+data class RtvcSearchRoot(
+    @JsonProperty("widgets") val widgets: List<RtvcWidget>? = null
+)
+
 data class RtvcState(
     @JsonProperty("content") val content: RtvcContent? = null
 )
@@ -160,24 +164,12 @@ class RTVCPlayProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val sections = listOf("series-ficcion", "series-documentales", "peliculas-ficcion", "peliculas-documentales")
-        val cleanQuery = query.lowercase().trim()
-        val results = mutableListOf<SearchResponse>()
-
-        for (section in sections) {
-            try {
-                val html = app.get("$mainUrl/$section").text
-                val state = extractState(html) ?: continue
-                val widgets = state.content?.currentContent?.widgets ?: emptyList()
-                val matched = widgets.flatMap { it.contents ?: emptyList() }
-                    .filter { (it.title?.lowercase()?.contains(cleanQuery) == true) || (it.subtitle?.lowercase()?.contains(cleanQuery) == true) }
-                    .mapNotNull { it.toSearchResponse() }
-                results.addAll(matched)
-            } catch (_: Exception) {
-            }
-        }
-
-        return results.distinctBy { it.url }
+        val searchUrl = "https://cms.rtvcplay.co/api/v1/search?key=${java.net.URLEncoder.encode(query, "UTF-8")}"
+        val response = app.get(searchUrl, headers = mapOf("Accept" to "application/json")).parsedSafe<RtvcSearchRoot>()
+        val widgets = response?.widgets ?: emptyList()
+        return widgets.flatMap { it.contents ?: emptyList() }
+            .mapNotNull { it.toSearchResponse() }
+            .distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse? {
