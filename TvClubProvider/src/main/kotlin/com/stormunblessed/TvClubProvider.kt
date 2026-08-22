@@ -386,7 +386,7 @@ class TvClubProvider : MainAPI() {
 
                     val m3u8Links = try {
                         M3u8Helper.generateM3u8(
-                            label,
+                            this.name,
                             m3u8Url,
                             u,
                             headers = mapOf(
@@ -404,7 +404,7 @@ class TvClubProvider : MainAPI() {
                     } else {
                         callback(
                             newExtractorLink(
-                                label,
+                                this.name,
                                 label,
                                 m3u8Url
                             ) {
