@@ -3,6 +3,7 @@ package com.stormunblessed
 import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -259,7 +260,7 @@ class CablevisionHdProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val doc = app.get(data, headers = headers).document
-        val optionLinks = doc.select("a.option[href*=\"/stream\"], a[href*=\"/stream\"]").mapNotNull {
+        val optionLinks = doc.select("a.option, a[href*=\"/stream\"], a[href*=\"stream\"]").mapNotNull {
             val link = it.attr("href").takeIf { s -> s.isNotBlank() } ?: return@mapNotNull null
             val name = it.text().ifBlank { "Opción" }
             fixUrl(link) to name
@@ -296,25 +297,23 @@ class CablevisionHdProvider : MainAPI() {
                     )
                 ).document
 
+                val finalHtml = finalPage.html()
+                val extractedUrls = mutableSetOf<String>()
+
+                // 1. Universal regex for playlist.php or .m3u8 URLs across scripts and HTML
+                val urlRegex = """(https?:\\?/\\?/[^"'<>\s]+\.(?:m3u8|php\?id=[^"'<>\s]+))""".toRegex()
+                urlRegex.findAll(finalHtml).forEach { match ->
+                    val clean = match.groupValues[1].replace("\\/", "/").replace("\\:", ":")
+                        .substringBefore("\"").substringBefore("'").substringBefore(";").trim()
+                    if (clean.isNotBlank()) {
+                        extractedUrls.add(clean)
+                    }
+                }
+
+                // 2. Specific pattern fallback (Unpacker / JWPlayer / Base64)
                 finalPage.select("script").forEach { scriptTag ->
                     val script = scriptTag.html()
                     when {
-                        script.contains("var src = \"") -> {
-                            val url = script.substringAfter("var src = \"").substringBefore("\";")
-                                .replace("\\/", "/").replace("\\:", ":").trim()
-                            if (url.isNotBlank()) {
-                                if (url.contains(".m3u8") || url.contains("playlist.php")) {
-                                    M3u8Helper.generateM3u8(
-                                        this.name,
-                                        url,
-                                        fixedIframe,
-                                        headers = mapOf("Referer" to fixedIframe)
-                                    ).forEach(callback)
-                                } else {
-                                    callback(newExtractorLink(this.name, name, url))
-                                }
-                            }
-                        }
                         script.contains("function(p,a,c,k,e,d)") -> {
                             val jsUnpacker = JsUnpacker(script)
                             if (jsUnpacker.detect()) {
@@ -324,33 +323,56 @@ class CablevisionHdProvider : MainAPI() {
                                 val hash = match?.groupValues?.get(1) ?: ""
                                 val extractedurl = decodeBase64UntilUnchanged(hash)
                                 if (extractedurl.isNotBlank()) {
-                                    if (extractedurl.contains(".m3u8")) {
-                                        M3u8Helper.generateM3u8(
-                                            this.name,
-                                            extractedurl,
-                                            fixedIframe,
-                                            headers = mapOf("Referer" to fixedIframe)
-                                        ).forEach(callback)
-                                    } else {
-                                        callback(newExtractorLink(this.name, name, extractedurl))
-                                    }
+                                    extractedUrls.add(extractedurl)
                                 }
                             }
                         }
                         script.contains("jwplayer.key = '") || script.contains("setupPlayer(\"") -> {
                             val url = script.substringAfter("setupPlayer(\"").substringBefore("\");").trim()
                             if (url.isNotBlank()) {
-                                callback(newExtractorLink(this.name, name, url))
+                                extractedUrls.add(url)
                             }
                         }
                         script.contains("var playbackURL = ") -> {
                             script.substringAfter("atob(\"").substringBefore("\")").let {
                                 val extractedurl = decodeBase64UntilUnchanged(it)
                                 if (extractedurl.isNotBlank()) {
-                                    callback(newExtractorLink(this.name, name, extractedurl))
+                                    extractedUrls.add(extractedurl)
                                 }
                             }
                         }
+                    }
+                }
+
+                // 3. Emit links for all found stream URLs
+                extractedUrls.forEach { streamUrl ->
+                    if (streamUrl.contains(".m3u8") || streamUrl.contains("playlist.php")) {
+                        val m3u8Links = try {
+                            M3u8Helper.generateM3u8(
+                                this.name,
+                                streamUrl,
+                                fixedIframe,
+                                headers = mapOf("Referer" to fixedIframe, "User-Agent" to userAgent)
+                            )
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+
+                        if (m3u8Links.isNotEmpty()) {
+                            m3u8Links.forEach(callback)
+                        } else {
+                            callback(
+                                newExtractorLink(
+                                    this.name,
+                                    name,
+                                    streamUrl,
+                                    referer = fixedIframe,
+                                    type = ExtractorLinkType.M3U8
+                                )
+                            )
+                        }
+                    } else {
+                        callback(newExtractorLink(this.name, name, streamUrl))
                     }
                 }
             } catch (_: Exception) {
