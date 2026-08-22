@@ -94,3 +94,25 @@ Para analizar un sitio o diagnosticar un provider roto:
    - Scripts embebidos con `var src = "..."` apuntando a `playlist.php?id=...&sig=...` o `.m3u8` deben procesarse con `M3u8Helper.generateM3u8` preservando la cabecera `Referer` del reproductor embebido.
    - En servidores de video externos como **VK / vkvideo.ru**, extraer directamente desde el objeto JSON `apiPrefetchCache` (`video.get`) para obtener MP4s multicalidad y listas HLS `hls_ondemand`.
 
+6. **Colecciones Reificadas en Modelos Jackson (`Array<T>? = null`)**:
+   - En Android (Dalvik/ART), el motor de Jackson sufre de *type erasure* en propiedades anidadas tipadas como `List<T>` (ej. `seasonList: List<PLProSeason>?` o `episodes: List<PLProEpisode>?`) o llamadas `parsedSafe<List<T>>()`, deserializándolas silenciosamente como `LinkedHashMap<String, Any>`. Al iterar sobre ellas, Kotlin lanza `ClassCastException: LinkedHashMap cannot be cast to ...`.
+   - **Regla**: Tipar siempre colecciones y arrays raíz como `Array<T>? = null` (ej. `Array<PLProSeason>`, `parsedSafe<Array<T>>()`) y convertir a lista en Kotlin mediante `.toList()`.
+
+7. **Anotación Obligatoria `@JsonIgnoreProperties(ignoreUnknown = true)`**:
+   - El mapper de Jackson en CloudStream puede fallar con `UnrecognizedPropertyException` si un endpoint JSON agrega propiedades no mapeadas (ej. `"d": ""`, `"pinned"`, `"tmdb"`).
+   - **Regla**: Anotar **todas** las data classes con `@JsonIgnoreProperties(ignoreUnknown = true)`.
+
+8. **Directiva de Tráfico Cifrado en Android (`mainUrl` HTTPS Obligatorio)**:
+   - Desde Android 9+, el sistema operativo bloquea por defecto todo tráfico HTTP sin cifrar (`http://`) con `IOException: Cleartext HTTP traffic to ... not permitted with network security policy`, fallando instantáneamente en ~200ms con "Enlaces no encontrados".
+   - **Regla**: Usar siempre `https://` en `mainUrl` y soportar stripping defensivo de ambos prefijos en `load()` (`url.removePrefix("https://...").removePrefix("http://...")`).
+
+9. **Registro de Extractores Multi-Espejo en Plugins**:
+   - Los servidores de video externos (*StreamWish, VidHide, Byse, Filelions*) rotan de dominios continuamente y pueden activar protecciones Cloudflare.
+   - **Regla**: Proveedores que utilicen estos hosts deben incluir sus clases de extractores (`StreamWishExtractor.kt`, `VidHidePro.kt`, `ByseSX.kt`) y registrarlas en su `@CloudstreamPlugin` mediante `registerExtractorAPI(...)`, aprovechando el fallback con `WebViewResolver` en caso de captchas o 403 Forbidden.
+
+10. **Parámetros Canónicos de `ExtractorLink` y `M3u8Helper`**:
+    - El primer argumento (`source`) de `M3u8Helper.generateM3u8` y `newExtractorLink` **DEBE ser `this.name`** (el nombre canónico del proveedor, ej. `"PLPro"`), y el segundo argumento (`name`) el label descriptivo del servidor y calidad (ej. `"StreamWish Latino HD"`).
+    - **Motivo**: `RepoLinkGenerator` de CloudStream utiliza `source` para filtrar y asociar los streams recibidos con el ciclo de vida del reproductor `ExoPlayer`.
+
+
+
