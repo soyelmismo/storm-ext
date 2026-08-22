@@ -12,6 +12,8 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.getPacked
 import com.lagradost.cloudstream3.utils.getAndUnpack
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.net.URI
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -54,6 +56,7 @@ data class PLProMovieItem(
     @JsonProperty("c") val poster: String? = null,
     @JsonProperty("f") val year: String? = null,
     @JsonProperty("g") val categoryIds: Array<Any>? = null,
+    @JsonProperty("i") val slug: String? = null,
     @JsonProperty("l") val quality: String? = null
 )
 
@@ -78,7 +81,8 @@ data class PLProSeriesItem(
     @JsonProperty("b") val name: String? = null,
     @JsonProperty("c") val poster: String? = null,
     @JsonProperty("d") val backdrop: String? = null,
-    @JsonProperty("g") val categoryIds: Array<Any>? = null
+    @JsonProperty("g") val categoryIds: Array<Any>? = null,
+    @JsonProperty("i") val slug: String? = null
 )
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -137,6 +141,13 @@ class PLProProvider : MainAPI() {
     private val authQuery = "username=p&password=p"
     private val streamServer = "https://tv.m3uts.xyz"
 
+    companion object {
+        private var cachedChannels: List<PLProChannelItem>? = null
+        private var cachedMovies: List<PLProMovieItem>? = null
+        private var cachedSeries: List<PLProSeriesItem>? = null
+        private var lastCacheTime: Long = 0L
+    }
+
     private fun fixPoster(poster: String?): String? {
         if (poster.isNullOrBlank()) return null
         return if (poster.startsWith("http")) {
@@ -149,6 +160,7 @@ class PLProProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val homePages = mutableListOf<HomePageList>()
+        val now = System.currentTimeMillis()
 
         // 1. Live Channels
         try {
@@ -158,6 +170,7 @@ class PLProProvider : MainAPI() {
             ).parsedSafe<PLProChannelRoot>()
 
             val channels = chRoot?.channels?.toList() ?: emptyList()
+            if (channels.isNotEmpty()) cachedChannels = channels
             val categories = chRoot?.categories?.toList() ?: emptyList()
 
             val topCats = listOf("Populares", "Nacionales", "Deportes", "Cine 24/7", "HD", "Infantiles", "Entretenimiento")
@@ -194,6 +207,7 @@ class PLProProvider : MainAPI() {
 
             val movies = movieRoot?.movies?.toList() ?: emptyList()
             if (movies.isNotEmpty()) {
+                cachedMovies = movies
                 val recentMovies = movies.take(30).map { m ->
                     val id = m.id?.toString() ?: ""
                     newMovieSearchResponse(
@@ -218,6 +232,7 @@ class PLProProvider : MainAPI() {
 
             val series = seriesRoot?.series?.toList() ?: emptyList()
             if (series.isNotEmpty()) {
+                cachedSeries = series
                 val recentSeries = series.take(30).map { s ->
                     val id = s.id?.toString() ?: ""
                     newTvSeriesSearchResponse(
@@ -233,6 +248,7 @@ class PLProProvider : MainAPI() {
         } catch (_: Exception) {
         }
 
+        lastCacheTime = now
         if (homePages.isEmpty()) throw ErrorLoadingException()
         return newHomePageResponse(homePages, hasNext = false)
     }
@@ -241,39 +257,60 @@ class PLProProvider : MainAPI() {
         val cleanQuery = query.lowercase().trim()
         val results = mutableListOf<SearchResponse>()
 
-        // Search live channels
-        try {
-            val chRoot = app.get(
-                "$mainUrl/channels?$authQuery",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<PLProChannelRoot>()
+        val now = System.currentTimeMillis()
+        val isCacheValid = (now - lastCacheTime < 30 * 60 * 1000L)
 
-            val channels = chRoot?.channels?.toList() ?: emptyList()
-            results.addAll(
-                channels.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.map { ch ->
-                    val id = ch.id?.toString() ?: ""
-                    newLiveSearchResponse(
-                        ch.name ?: "Canal",
-                        "$mainUrl/live/$id",
-                        TvType.Live
-                    ) {
-                        this.posterUrl = ch.icon
-                    }
+        // 1. Search live channels
+        val channels = if (isCacheValid && cachedChannels != null) {
+            cachedChannels
+        } else {
+            try {
+                val chRoot = app.get(
+                    "$mainUrl/channels?$authQuery",
+                    headers = mapOf("User-Agent" to userAgent),
+                    timeout = 8
+                ).parsedSafe<PLProChannelRoot>()
+                chRoot?.channels?.toList()?.also { cachedChannels = it }
+            } catch (_: Throwable) {
+                cachedChannels
+            }
+        } ?: emptyList()
+
+        results.addAll(
+            channels.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.map { ch ->
+                val id = ch.id?.toString() ?: ""
+                newLiveSearchResponse(
+                    ch.name ?: "Canal",
+                    "$mainUrl/live/$id",
+                    TvType.Live
+                ) {
+                    this.posterUrl = ch.icon
                 }
-            )
-        } catch (_: Exception) {
-        }
+            }
+        )
 
-        // Search movies
-        try {
-            val movieRoot = app.get(
-                "$mainUrl/movies?$authQuery",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<PLProMovieRoot>()
+        // 2. Search Movies & Series concurrently
+        coroutineScope {
+            val moviesDeferred = async {
+                val movies = if (isCacheValid && cachedMovies != null) {
+                    cachedMovies
+                } else {
+                    try {
+                        val movieRoot = app.get(
+                            "$mainUrl/movies?$authQuery",
+                            headers = mapOf("User-Agent" to userAgent),
+                            timeout = 10
+                        ).parsedSafe<PLProMovieRoot>()
+                        movieRoot?.movies?.toList()?.also { cachedMovies = it }
+                    } catch (_: Throwable) {
+                        cachedMovies
+                    }
+                } ?: emptyList()
 
-            val movies = movieRoot?.movies?.toList() ?: emptyList()
-            results.addAll(
-                movies.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.take(25).map { m ->
+                movies.filter {
+                    it.name?.lowercase()?.contains(cleanQuery) == true ||
+                    it.slug?.lowercase()?.contains(cleanQuery) == true
+                }.take(30).map { m ->
                     val id = m.id?.toString() ?: ""
                     newMovieSearchResponse(
                         m.name ?: "Película",
@@ -283,20 +320,28 @@ class PLProProvider : MainAPI() {
                         this.posterUrl = fixPoster(m.poster)
                     }
                 }
-            )
-        } catch (_: Exception) {
-        }
+            }
 
-        // Search series
-        try {
-            val seriesRoot = app.get(
-                "$mainUrl/series?$authQuery",
-                headers = mapOf("User-Agent" to userAgent)
-            ).parsedSafe<PLProSeriesRoot>()
+            val seriesDeferred = async {
+                val series = if (isCacheValid && cachedSeries != null) {
+                    cachedSeries
+                } else {
+                    try {
+                        val seriesRoot = app.get(
+                            "$mainUrl/series?$authQuery",
+                            headers = mapOf("User-Agent" to userAgent),
+                            timeout = 10
+                        ).parsedSafe<PLProSeriesRoot>()
+                        seriesRoot?.series?.toList()?.also { cachedSeries = it }
+                    } catch (_: Throwable) {
+                        cachedSeries
+                    }
+                } ?: emptyList()
 
-            val series = seriesRoot?.series?.toList() ?: emptyList()
-            results.addAll(
-                series.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.take(25).map { s ->
+                series.filter {
+                    it.name?.lowercase()?.contains(cleanQuery) == true ||
+                    it.slug?.lowercase()?.contains(cleanQuery) == true
+                }.take(30).map { s ->
                     val id = s.id?.toString() ?: ""
                     newTvSeriesSearchResponse(
                         s.name ?: "Serie",
@@ -306,10 +351,13 @@ class PLProProvider : MainAPI() {
                         this.posterUrl = fixPoster(s.poster)
                     }
                 }
-            )
-        } catch (_: Exception) {
+            }
+
+            results.addAll(moviesDeferred.await())
+            results.addAll(seriesDeferred.await())
         }
 
+        lastCacheTime = now
         return results.distinctBy { it.url }
     }
 
