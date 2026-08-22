@@ -1,6 +1,7 @@
 package com.stormunblessed
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
@@ -13,16 +14,19 @@ import com.lagradost.cloudstream3.utils.getPacked
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import java.net.URI
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProChannelRoot(
     @JsonProperty("channels") val channels: List<PLProChannelItem>? = null,
     @JsonProperty("categories") val categories: List<PLProChannelCategory>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProChannelCategory(
     @JsonProperty("id") val id: Any? = null,
     @JsonProperty("name") val name: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProChannelItem(
     @JsonProperty("a") val id: Any? = null,
     @JsonProperty("b") val name: String? = null,
@@ -31,16 +35,19 @@ data class PLProChannelItem(
     @JsonProperty("g") val epg: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProMovieRoot(
     @JsonProperty("movies") val movies: List<PLProMovieItem>? = null,
     @JsonProperty("categories") val categories: List<PLProMovieCategory>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProMovieCategory(
     @JsonProperty("a") val id: Any? = null,
     @JsonProperty("b") val name: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProMovieItem(
     @JsonProperty("a") val id: Any? = null,
     @JsonProperty("b") val name: String? = null,
@@ -50,6 +57,7 @@ data class PLProMovieItem(
     @JsonProperty("l") val quality: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProMovieDetails(
     @JsonProperty("a") val id: Any? = null,
     @JsonProperty("b") val name: String? = null,
@@ -58,11 +66,13 @@ data class PLProMovieDetails(
     @JsonProperty("f") val releaseDate: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProSeriesRoot(
     @JsonProperty("series") val series: List<PLProSeriesItem>? = null,
     @JsonProperty("categories") val categories: List<PLProMovieCategory>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProSeriesItem(
     @JsonProperty("a") val id: Any? = null,
     @JsonProperty("b") val name: String? = null,
@@ -71,6 +81,7 @@ data class PLProSeriesItem(
     @JsonProperty("g") val categoryIds: List<Any>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProSeriesDetails(
     @JsonProperty("id") val id: Any? = null,
     @JsonProperty("name") val name: String? = null,
@@ -80,11 +91,13 @@ data class PLProSeriesDetails(
     @JsonProperty("seasonList") val seasonList: List<PLProSeason>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProSeason(
     @JsonProperty("num") val num: Any? = null,
     @JsonProperty("episodes") val episodes: List<PLProEpisode>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProEpisode(
     @JsonProperty("id") val id: Any? = null,
     @JsonProperty("season") val season: Any? = null,
@@ -95,6 +108,7 @@ data class PLProEpisode(
     @JsonProperty("num") val num: Any? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PLProLink(
     @JsonProperty("a") val url: String? = null,
     @JsonProperty("b") val language: String? = null,

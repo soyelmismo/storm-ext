@@ -1,6 +1,7 @@
 package com.stormunblessed
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
@@ -13,12 +14,14 @@ import com.lagradost.cloudstream3.utils.getPacked
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import java.net.URI
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamCategory(
     @JsonProperty("category_id") val categoryId: Any? = null,
     @JsonProperty("category_name") val categoryName: String? = null,
     @JsonProperty("parent_id") val parentId: Any? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamStream(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("stream_type") val streamType: String? = null,
@@ -32,11 +35,13 @@ data class XtreamStream(
     @JsonProperty("categories_ids") val categoriesIds: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamSeriesDetails(
     @JsonProperty("info") val info: XtreamSeriesInfo? = null,
     @JsonProperty("episodes") val episodes: Map<String, List<XtreamEpisode>>? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamSeriesInfo(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("cover") val cover: String? = null,
@@ -44,6 +49,7 @@ data class XtreamSeriesInfo(
     @JsonProperty("backdrop") val backdrop: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamEpisode(
     @JsonProperty("id") val id: Any? = null,
     @JsonProperty("episode_num") val episodeNum: Any? = null,
@@ -52,11 +58,13 @@ data class XtreamEpisode(
     @JsonProperty("info") val info: XtreamEpisodeInfo? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamEpisodeInfo(
     @JsonProperty("plot") val plot: String? = null,
     @JsonProperty("movie_image") val movieImage: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamEpisodeLink(
     @JsonProperty("id") val id: Any? = null,
     @JsonProperty("url") val url: String? = null,
@@ -64,10 +72,12 @@ data class XtreamEpisodeLink(
     @JsonProperty("language") val language: String? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamVodDetails(
     @JsonProperty("info") val info: XtreamVodInfo? = null
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class XtreamVodInfo(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("plot") val plot: String? = null,
