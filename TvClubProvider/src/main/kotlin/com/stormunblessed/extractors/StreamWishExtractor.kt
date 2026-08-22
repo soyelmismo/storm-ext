@@ -6,6 +6,8 @@ import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import com.lagradost.cloudstream3.utils.getPacked
@@ -193,7 +195,7 @@ open class StreamWishExtractor : ExtractorApi() {
             else -> pageResponse.document.selectFirst("script:containsData(sources:)")?.data() ?: pageResponse.text
         }
 
-        val m3u8Urls = Regex("""https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(playerScriptData)
+        val m3u8Urls = Regex("""https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(playerScriptData ?: "")
             .map { it.value.replace("\\/", "/") }
             .filter { it.startsWith("http") }
             .distinct()
