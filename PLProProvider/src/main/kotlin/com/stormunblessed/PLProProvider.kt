@@ -157,8 +157,8 @@ class PLProProvider : MainAPI() {
                 headers = mapOf("User-Agent" to userAgent)
             ).parsedSafe<PLProChannelRoot>()
 
-            val channels = chRoot?.channels ?: emptyList()
-            val categories = chRoot?.categories ?: emptyList()
+            val channels = chRoot?.channels?.toList() ?: emptyList()
+            val categories = chRoot?.categories?.toList() ?: emptyList()
 
             val topCats = listOf("Populares", "Nacionales", "Deportes", "Cine 24/7", "HD", "Infantiles", "Entretenimiento")
             for (catName in topCats) {
@@ -192,7 +192,7 @@ class PLProProvider : MainAPI() {
                 headers = mapOf("User-Agent" to userAgent)
             ).parsedSafe<PLProMovieRoot>()
 
-            val movies = movieRoot?.movies ?: emptyList()
+            val movies = movieRoot?.movies?.toList() ?: emptyList()
             if (movies.isNotEmpty()) {
                 val recentMovies = movies.take(30).map { m ->
                     val id = m.id?.toString() ?: ""
@@ -216,7 +216,7 @@ class PLProProvider : MainAPI() {
                 headers = mapOf("User-Agent" to userAgent)
             ).parsedSafe<PLProSeriesRoot>()
 
-            val series = seriesRoot?.series ?: emptyList()
+            val series = seriesRoot?.series?.toList() ?: emptyList()
             if (series.isNotEmpty()) {
                 val recentSeries = series.take(30).map { s ->
                     val id = s.id?.toString() ?: ""
@@ -248,7 +248,7 @@ class PLProProvider : MainAPI() {
                 headers = mapOf("User-Agent" to userAgent)
             ).parsedSafe<PLProChannelRoot>()
 
-            val channels = chRoot?.channels ?: emptyList()
+            val channels = chRoot?.channels?.toList() ?: emptyList()
             results.addAll(
                 channels.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.map { ch ->
                     val id = ch.id?.toString() ?: ""
@@ -271,7 +271,7 @@ class PLProProvider : MainAPI() {
                 headers = mapOf("User-Agent" to userAgent)
             ).parsedSafe<PLProMovieRoot>()
 
-            val movies = movieRoot?.movies ?: emptyList()
+            val movies = movieRoot?.movies?.toList() ?: emptyList()
             results.addAll(
                 movies.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.take(25).map { m ->
                     val id = m.id?.toString() ?: ""
@@ -294,7 +294,7 @@ class PLProProvider : MainAPI() {
                 headers = mapOf("User-Agent" to userAgent)
             ).parsedSafe<PLProSeriesRoot>()
 
-            val series = seriesRoot?.series ?: emptyList()
+            val series = seriesRoot?.series?.toList() ?: emptyList()
             results.addAll(
                 series.filter { it.name?.lowercase()?.contains(cleanQuery) == true }.take(25).map { s ->
                     val id = s.id?.toString() ?: ""
