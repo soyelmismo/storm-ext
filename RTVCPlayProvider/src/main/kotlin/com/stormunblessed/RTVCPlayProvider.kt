@@ -206,7 +206,9 @@ class RTVCPlayProvider : MainAPI() {
                     val seasonNum = sMap.season?.toString()?.toIntOrNull() ?: (sIdx + 1)
                     val chapters = sMap.contents ?: emptyList()
                     chapters.forEachIndexed { eIdx, chMap ->
-                        val epTitle = chMap.title ?: "Episodio ${eIdx + 1}"
+                        val epTitle = chMap.subtitle?.takeIf { it.isNotBlank() }
+                            ?: chMap.title?.takeIf { it.isNotBlank() }
+                            ?: "Episodio ${eIdx + 1}"
                         val epSlug = chMap.slug ?: chMap.subtitleSlug ?: return@forEachIndexed
                         val epCover = chMap.image?.getUrl()
                         val epUrl = if (epSlug.startsWith("http")) epSlug else "$mainUrl$epSlug"
