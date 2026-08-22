@@ -165,6 +165,8 @@ class CablevisionHdProvider : MainAPI() {
         "Animal Planet",
         "Nat Geo",
         "Nat Geo Mundo",
+    )
+
     val dos47Cat = setOf(
         "24/7",
     )
