@@ -10,6 +10,9 @@ import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -135,19 +138,21 @@ object Embed69Extractor {
                 serverName.isNotBlank() -> serverName.replaceFirstChar { it.uppercase() }
                 else -> link.source
             }
-            callback.invoke(
-                newExtractorLink(
-                    source = providerName,
-                    name = "$langLabel - $hostLabel",
-                    url = link.url,
-                ) {
-                    this.quality = link.quality
-                    this.type = link.type
-                    this.referer = link.referer
-                    this.headers = link.headers
-                    this.extractorData = link.extractorData
-                }
-            )
+            CoroutineScope(Dispatchers.IO).launch {
+                callback.invoke(
+                    newExtractorLink(
+                        source = providerName,
+                        name = "$langLabel - $hostLabel",
+                        url = link.url,
+                    ) {
+                        this.quality = link.quality
+                        this.type = link.type
+                        this.referer = link.referer
+                        this.headers = link.headers
+                        this.extractorData = link.extractorData
+                    }
+                )
+            }
         }
     }
 
