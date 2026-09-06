@@ -1,0 +1,231 @@
+package com.stormunblessed.extractors
+
+import com.lagradost.api.Log
+import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.USER_AGENT
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.utils.M3u8Helper
+import com.lagradost.cloudstream3.utils.getAndUnpack
+import com.lagradost.cloudstream3.utils.getPacked
+import com.lagradost.cloudstream3.network.WebViewResolver
+
+
+class SaveFiles: StreamWishExtractor() {
+    override var name = "SaveFiles"
+    override var mainUrl = "https://savefiles.com"
+}
+
+class Mwish : StreamWishExtractor() {
+    override val name = "Mwish"
+    override val mainUrl = "https://mwish.pro"
+}
+
+class Dwish : StreamWishExtractor() {
+    override val name = "Dwish"
+    override val mainUrl = "https://dwish.pro"
+}
+
+class Ewish : StreamWishExtractor() {
+    override val name = "Embedwish"
+    override val mainUrl = "https://embedwish.com"
+}
+
+class WishembedPro : StreamWishExtractor() {
+    override val name = "Wishembed"
+    override val mainUrl = "https://wishembed.pro"
+}
+
+class Kswplayer : StreamWishExtractor() {
+    override val name = "Kswplayer"
+    override val mainUrl = "https://kswplayer.info"
+}
+
+class Wishfast : StreamWishExtractor() {
+    override val name = "Wishfast"
+    override val mainUrl = "https://wishfast.top"
+}
+
+class Streamwish2 : StreamWishExtractor() {
+    override val mainUrl = "https://streamwish.site"
+}
+
+class SfastwishCom : StreamWishExtractor() {
+    override val name = "Sfastwish"
+    override val mainUrl = "https://sfastwish.com"
+}
+
+class Strwish : StreamWishExtractor() {
+    override val name = "Strwish"
+    override val mainUrl = "https://strwish.xyz"
+}
+
+class Strwish2 : StreamWishExtractor() {
+    override val name = "Strwish"
+    override val mainUrl = "https://strwish.com"
+}
+
+class FlaswishCom : StreamWishExtractor() {
+    override val name = "Flaswish"
+    override val mainUrl = "https://flaswish.com"
+}
+
+class Awish : StreamWishExtractor() {
+    override val name = "Awish"
+    override val mainUrl = "https://awish.pro"
+}
+
+class Obeywish : StreamWishExtractor() {
+    override val name = "Obeywish"
+    override val mainUrl = "https://obeywish.com"
+}
+
+class Jodwish : StreamWishExtractor() {
+    override val name = "Jodwish"
+    override val mainUrl = "https://jodwish.com"
+}
+
+class Swhoi : StreamWishExtractor() {
+    override val name = "Swhoi"
+    override val mainUrl = "https://swhoi.com"
+}
+
+class Multimovies : StreamWishExtractor() {
+    override val name = "Multimovies"
+    override val mainUrl = "https://multimovies.cloud"
+}
+
+class UqloadsXyz : StreamWishExtractor() {
+    override val name = "Uqloads"
+    override val mainUrl = "https://uqloads.xyz"
+}
+
+class Doodporn : StreamWishExtractor() {
+    override val name = "Doodporn"
+    override val mainUrl = "https://doodporn.xyz"
+}
+
+class CdnwishCom : StreamWishExtractor() {
+    override val name = "Cdnwish"
+    override val mainUrl = "https://cdnwish.com"
+}
+
+class Asnwish : StreamWishExtractor() {
+    override val name = "Asnwish"
+    override val mainUrl = "https://asnwish.com"
+}
+
+class Nekowish : StreamWishExtractor() {
+    override val name = "Nekowish"
+    override val mainUrl = "https://nekowish.my.id"
+}
+
+class Nekostream : StreamWishExtractor() {
+    override val name = "Nekostream"
+    override val mainUrl = "https://neko-stream.click"
+}
+
+class Swdyu : StreamWishExtractor() {
+    override val name = "Swdyu"
+    override val mainUrl = "https://swdyu.com"
+}
+
+class Wishonly : StreamWishExtractor() {
+    override val name = "Wishonly"
+    override val mainUrl = "https://wishonly.site"
+}
+
+class Playerwish : StreamWishExtractor() {
+    override val name = "Playerwish"
+    override val mainUrl = "https://playerwish.com"
+}
+
+class StreamHLS : StreamWishExtractor() {
+    override val name = "StreamHLS"
+    override val mainUrl = "https://streamhls.to"
+}
+
+class Do7go : StreamWishExtractor() {
+    override val name = "Do7go"
+    override val mainUrl = "https://do7go.com"
+}
+
+class HlsWish : StreamWishExtractor() {
+    override val name = "HlsWish"
+    override val mainUrl = "https://hlswish.com"
+}
+
+class StreamwishTop : StreamWishExtractor() {
+    override var name = "Streamwish"
+    override var mainUrl = "https://streamwish.top"
+}
+
+open class StreamWishExtractor : ExtractorApi() {
+    override val name = "Streamwish"
+    override val mainUrl = "https://streamwish.to"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to "$mainUrl/"
+        )
+
+        val pageResponse = try {
+            app.get(resolveEmbedUrl(url), referer = referer)
+        } catch (_: Exception) {
+            try { app.get(url, referer = referer) } catch (_: Exception) { null }
+        } ?: return
+
+        val playerScriptData = when {
+            !getPacked(pageResponse.text).isNullOrEmpty() -> getAndUnpack(pageResponse.text)
+            pageResponse.document.select("script").any { it.html().contains("jwplayer(\"vplayer\").setup(") } ->
+                pageResponse.document.select("script").firstOrNull {
+                    it.html().contains("jwplayer(\"vplayer\").setup(")
+                }?.html()
+            else -> pageResponse.document.selectFirst("script:containsData(sources:)")?.data() ?: pageResponse.text
+        }
+
+        val m3u8Urls = Regex("""https?:\\?/\\?/[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(playerScriptData ?: "")
+            .map { it.value.replace("\\/", "/") }
+            .filter { it.startsWith("http") }
+            .distinct()
+            .toList()
+
+        if (m3u8Urls.isNotEmpty()) {
+            for (directStreamUrl in m3u8Urls) {
+                try {
+                    M3u8Helper.generateM3u8(
+                        name,
+                        directStreamUrl,
+                        mainUrl,
+                        headers = headers
+                    ).forEach(callback)
+                } catch (_: Exception) {
+                    callback(
+                        newExtractorLink(name, name, directStreamUrl) {
+                            this.type = ExtractorLinkType.M3U8
+                            this.referer = "$mainUrl/"
+                            this.headers = headers
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun resolveEmbedUrl(inputUrl: String): String {
+        val videoId = inputUrl.substringAfterLast("/").substringBefore("?").substringBefore("&")
+        return "$mainUrl/e/$videoId"
+    }
+}
+
+
