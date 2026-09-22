@@ -44,7 +44,7 @@ fun Project.android(configuration: LibraryExtension.() -> Unit) {
         project.extensions.findByType(JavaPluginExtension::class.java)?.apply {
             // Use Java 17 toolchain even if a higher JDK runs the build.
             toolchain {
-                languageVersion.set(JavaLanguageVersion.of(17))
+                languageVersion.set(JavaLanguageVersion.of(if (System.getenv("CI") != null) 17 else 21))
             }
         }
 

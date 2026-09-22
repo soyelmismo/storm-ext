@@ -6,6 +6,10 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.net.URLEncoder
 
 class PoseidonHD2Provider : MainAPI() {
@@ -69,23 +73,23 @@ class PoseidonHD2Provider : MainAPI() {
             val data = extractNextData<PoseidonHomeProps>(html)
 
             data?.tabLastReleasedMovies?.let { list ->
-                val items = list.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+                val items = list.mapNotNull { it.toSearchResponse() }
                 if (items.isNotEmpty()) homeItems.add(HomePageList("Estrenos Películas", items))
             }
             data?.topMoviesDay?.let { list ->
-                val items = list.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+                val items = list.mapNotNull { it.toSearchResponse() }
                 if (items.isNotEmpty()) homeItems.add(HomePageList("Películas del Día", items))
             }
             data?.topMoviesWeek?.let { list ->
-                val items = list.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+                val items = list.mapNotNull { it.toSearchResponse() }
                 if (items.isNotEmpty()) homeItems.add(HomePageList("Tendencias de la Semana", items))
             }
             data?.series?.let { list ->
-                val items = list.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+                val items = list.mapNotNull { it.toSearchResponse() }
                 if (items.isNotEmpty()) homeItems.add(HomePageList("Series Destacadas", items))
             }
             data?.tabLastMovies?.let { list ->
-                val items = list.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+                val items = list.mapNotNull { it.toSearchResponse() }
                 if (items.isNotEmpty()) homeItems.add(HomePageList("Últimas Películas", items))
             }
             return newHomePageResponse(homeItems, hasNext = false)
@@ -100,7 +104,7 @@ class PoseidonHD2Provider : MainAPI() {
         val html = app.get(url, headers = mapOf("User-Agent" to userAgent)).text
         val data = extractNextData<PoseidonListingProps>(html)
         val movies = data?.movies?.toList() ?: emptyList()
-        val items = movies.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+        val items = movies.mapNotNull { it.toSearchResponse() }
         val maxPages = data?.pages?.toString()?.toIntOrNull() ?: 1
         val hasNext = page < maxPages
 
@@ -116,7 +120,7 @@ class PoseidonHD2Provider : MainAPI() {
         val html = app.get(url, headers = mapOf("User-Agent" to userAgent)).text
         val data = extractNextData<PoseidonListingProps>(html)
         val movies = data?.movies?.toList() ?: return emptyList()
-        return movies.mapNotNull { it.toSearchResponse(this.name, mainUrl) }
+        return movies.mapNotNull { it.toSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -165,7 +169,6 @@ class PoseidonHD2Provider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.tags = tags
-                this.actors = actors
             }
         } else {
             val data = extractNextData<PoseidonMovieProps>(html) ?: return null
@@ -186,7 +189,6 @@ class PoseidonHD2Provider : MainAPI() {
                 this.year = year
                 this.duration = runtime
                 this.tags = tags
-                this.actors = actors
             }
         }
     }
@@ -236,12 +238,21 @@ class PoseidonHD2Provider : MainAPI() {
                         .replace("doodstream.com", "playmogo.com")
 
                     loadExtractor(fixedUrl, playerUrl, subtitleCallback) { link ->
-                        callback(
-                            link.copy(
-                                source = this.name,
-                                name = "${link.name} [$langLabel]"
+                        CoroutineScope(Dispatchers.IO).launch {
+                            callback(
+                                newExtractorLink(
+                                    source = this@PoseidonHD2Provider.name,
+                                    name = "${link.name} [$langLabel]",
+                                    url = link.url,
+                                ) {
+                                    this.quality = link.quality
+                                    this.type = link.type
+                                    this.referer = link.referer
+                                    this.headers = link.headers
+                                    this.extractorData = link.extractorData
+                                }
                             )
-                        )
+                        }
                     }
                 } catch (_: Exception) {
                 }
@@ -304,38 +315,30 @@ class PoseidonHD2Provider : MainAPI() {
         @JsonProperty("runtime") val runtime: Any? = null,
         @JsonProperty("releaseDate") val releaseDate: String? = null,
         @JsonProperty("url") val url: PoseidonUrl? = null,
-    ) {
-        fun toSearchResponse(providerName: String, mainUrl: String): SearchResponse? {
-            val title = titles?.name?.takeIf { it.isNotBlank() } ?: return null
-            val slug = url?.slug?.trim() ?: return null
-            val poster = images?.poster
-            val isSeries = slug.startsWith("series/")
-            val fullUrl = if (isSeries) {
-                "$mainUrl/serie/${slug.removePrefix("series/")}"
-            } else {
-                "$mainUrl/pelicula/${slug.removePrefix("movies/")}"
-            }
-            val tvType = if (isSeries) TvType.TvSeries else TvType.Movie
-            val year = releaseDate?.substringBefore("-")?.toIntOrNull()
+    )
 
-            return if (isSeries) {
-                TvSeriesSearchResponse(
-                    name = title,
-                    url = fullUrl,
-                    apiName = providerName,
-                    type = tvType,
-                    posterUrl = poster,
-                    year = year,
-                )
-            } else {
-                MovieSearchResponse(
-                    name = title,
-                    url = fullUrl,
-                    apiName = providerName,
-                    type = tvType,
-                    posterUrl = poster,
-                    year = year,
-                )
+    private fun PoseidonItem.toSearchResponse(): SearchResponse? {
+        val title = titles?.name?.takeIf { it.isNotBlank() } ?: return null
+        val slug = url?.slug?.trim() ?: return null
+        val poster = images?.poster
+        val isSeries = slug.startsWith("series/")
+        val fullUrl = if (isSeries) {
+            "$mainUrl/serie/${slug.removePrefix("series/")}"
+        } else {
+            "$mainUrl/pelicula/${slug.removePrefix("movies/")}"
+        }
+        val tvType = if (isSeries) TvType.TvSeries else TvType.Movie
+        val year = releaseDate?.substringBefore("-")?.toIntOrNull()
+
+        return if (isSeries) {
+            newTvSeriesSearchResponse(title, fullUrl, tvType) {
+                this.posterUrl = poster
+                this.year = year
+            }
+        } else {
+            newMovieSearchResponse(title, fullUrl, tvType) {
+                this.posterUrl = poster
+                this.year = year
             }
         }
     }

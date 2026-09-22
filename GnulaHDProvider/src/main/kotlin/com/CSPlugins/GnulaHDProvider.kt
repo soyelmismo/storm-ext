@@ -1,20 +1,17 @@
 package com.CSPlugins
 
-import android.util.Log
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.network.CloudflareKiller
-import com.lagradost.cloudstream3.utils.AppUtils
+import com.lagradost.cloudstream3.base64DecodeArray
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.nicehttp.NiceResponse
-import com.lagradost.cloudstream3.utils.loadExtractor
-import org.jsoup.nodes.Element
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.util.*
-
+import org.jsoup.nodes.Element
 
 class GnulaHDProvider : MainAPI() {
 
@@ -25,117 +22,161 @@ class GnulaHDProvider : MainAPI() {
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(
-            TvType.Movie,
-            TvType.TvSeries,
-            TvType.Anime,
+        TvType.Movie,
+        TvType.TvSeries,
+        TvType.Anime,
     )
 
     companion object {
         fun getType(t: String): TvType = when {
-            t.contains("Serie")     -> TvType.TvSeries
-            t.contains("Pelicula")  -> TvType.Movie
-            t.contains("Anime")     -> TvType.Anime
-            else                    -> TvType.TvSeries
+            t.contains("Serie", ignoreCase = true) -> TvType.TvSeries
+            t.contains("Pelicula", ignoreCase = true) -> TvType.Movie
+            t.contains("Anime", ignoreCase = true) -> TvType.Anime
+            else -> TvType.Movie
         }
     }
 
     override val mainPage = mainPageOf(
-        "ver/?type=Pelicula&order=latest" to "Pelis",
+        "ver/?type=Pelicula&order=latest" to "Películas",
         "ver/?status=&type=Serie&order=latest" to "Series",
         "ver/?status=&type=Anime&order=latest" to "Anime",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get("$mainUrl/${request.data}&page=$page").documentLarge
-        val home     = document.select("div.postbody article.bs").mapNotNull { it.toSearchResult() }
+        val home = document.select("a.gnrd-card, div.postbody article.bs").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
-            list    = HomePageList(
-                name               = request.name,
-                list               = home,
+            list = HomePageList(
+                name = request.name,
+                list = home,
                 isHorizontalImages = false
             ),
-            hasNext = true
+            hasNext = home.isNotEmpty()
         )
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val href      = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
-        val type      = getType(this.selectFirst("div.typez")!!.text())
-        val posterUrl = fixUrlNull(this.selectFirst("a div.limit > img")?.attr("src") ?: "")
-        var rawTitle  = this.selectFirst("a")?.attr("title") ?: "Desconocido"
-        val langs     = this.select("div.caratula-flags-badge img")
-            .mapNotNull { img -> img.attr("title").take(3) }
-            .joinToString("/")
-        val title = if (langs.isNotEmpty()) "$rawTitle [$langs]" else "$rawTitle"
+        val href = fixUrlNull(this.attr("href").ifEmpty { this.selectFirst("a")?.attr("href") }) ?: return null
+        val img = this.selectFirst("img")
+        val posterUrl = fixUrlNull(img?.attr("src"))
+        val title = img?.attr("alt")?.takeIf { it.isNotBlank() }
+            ?: this.attr("title").takeIf { it.isNotBlank() }
+            ?: this.selectFirst(".gnrd-card-title, a")?.attr("title")
+            ?: return null
 
-        return newAnimeSearchResponse(title, href, type) {
+        val langs = this.select(".gnrd-lang, div.caratula-flags-badge img")
+            .mapNotNull { it.text().ifEmpty { it.attr("title") }.take(3) }
+            .joinToString("/")
+        val displayTitle = if (langs.isNotEmpty()) "$title [$langs]" else title
+
+        val type = if (href.contains("/serie") || this.selectFirst(".gnrd-card-genres")?.text()?.contains("Serie", true) == true) {
+            TvType.TvSeries
+        } else {
+            TvType.Movie
+        }
+
+        return newMovieSearchResponse(displayTitle, href, type) {
             this.posterUrl = posterUrl
         }
     }
 
-    private val cloudflareKiller = CloudflareKiller()
-    suspend fun appGetChildMainUrl(url: String): NiceResponse {
-        // return app.get(url, interceptor = cloudflareKiller )
-        return app.get(url)
+    override suspend fun search(query: String): List<SearchResponse> {
+        val doc = app.get("$mainUrl/?s=$query").documentLarge
+        return doc.select("a.gnrd-card, div.postbody article.bs").mapNotNull { it.toSearchResult() }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        return app.get("$mainUrl/?s=$query").document.select("div.postbody article.bs").map {
-            val rawTitle = it.selectFirst("a")!!.attr("title")
-            val rawType  = it.selectFirst("div.typez")!!.text()
-            val type     = getType(rawType)
-            val href     = fixUrl(it.selectFirst("a")!!.attr("href"))
-            val image    = it.selectFirst("a div.limit > img")!!.attr("src")
-            val langs    = it.select("div.caratula-flags-badge img")
-                .mapNotNull { img -> img.attr("title").take(3) }
-                .joinToString("/")
-            val title = "($rawType $langs) $rawTitle"
-            newMovieSearchResponse(title, href, getType(it.selectFirst("div.typez")!!.text())){
-                this.posterUrl = fixUrl(image)
+    override suspend fun load(url: String): LoadResponse? {
+        val doc = app.get(url).documentLarge
+        val title = doc.selectFirst("h1 span.gnrd-sr")?.text()
+            ?: doc.selectFirst("h1.entry-title")?.text()
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.substringBefore(" |")
+            ?: return null
+
+        val poster = fixUrlNull(
+            doc.selectFirst("meta[property=og:image]")?.attr("content")
+                ?: doc.selectFirst("div.thumb img, div.gnrd-card-art img")?.attr("src")
+        )
+        val description = doc.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: doc.select("div.mindesc p").text()
+
+        val year = doc.selectFirst(".gnrd-card-metaline span:not(.gnrd-cm-rating)")?.text()?.trim()?.toIntOrNull()
+            ?: doc.select("span.split:has(b:matchesOwn(^Estreno:))").first()?.ownText()?.trim()?.takeLast(4)?.toIntOrNull()
+
+        val genres = doc.select(".gnrd-card-genres, div.genxed a").flatMap { it.text().split("·", ",").map { g -> g.trim() } }
+
+        val episodeElements = doc.select("a.gnrd-epc, div.postbody div.eplister a")
+        val isSeries = episodeElements.isNotEmpty() || url.contains("/series/")
+
+        if (isSeries) {
+            val episodes = episodeElements.mapNotNull { epEl ->
+                val epHref = fixUrlNull(epEl.attr("href")) ?: return@mapNotNull null
+                val s = epEl.attr("data-s").toIntOrNull()
+                    ?: Regex("""(\d+)x(\d+)""").find(epHref)?.groupValues?.get(1)?.toIntOrNull()
+                val e = epEl.attr("data-e").toIntOrNull()
+                    ?: Regex("""(\d+)x(\d+)""").find(epHref)?.groupValues?.get(2)?.toIntOrNull()
+                val name = epEl.selectFirst(".gnrd-epc-title, div.epl-title")?.text() ?: "Episodio $e"
+                val epThumb = epEl.selectFirst(".gnrd-epc-thumb")?.attr("style")?.substringAfter("url('")?.substringBefore("')")
+                    ?: epEl.selectFirst("img")?.attr("src")
+
+                newEpisode(epHref) {
+                    this.name = name
+                    this.season = s
+                    this.episode = e
+                    this.posterUrl = fixUrlNull(epThumb)
+                }
+            }
+            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                this.posterUrl = poster
+                this.plot = description
+                this.year = year
+                this.tags = genres
+            }
+        } else {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster
+                this.plot = description
+                this.year = year
+                this.tags = genres
             }
         }
     }
 
-override suspend fun load(url: String): LoadResponse? {
-    val doc = app.get(url).document
-    val title = doc.selectFirst("div.postbody h1.entry-title")!!.text()
-    val type = doc.select("span:has(b:matchesOwn(^Tipo:))").first()?.ownText()?.trim() ?: ""
-    val poster = doc.selectFirst("div.postbody div.thumb img")!!.attr("src")
-    val backimage = doc.selectFirst("div.postbody div.thumb img")!!.attr("src")
-    val premiereYear: Int? = doc.select("span.split:has(b:matchesOwn(^Estreno:))").first()?.ownText()?.trim()?.takeLast(4)?.toIntOrNull()
-    val description = doc.select("div.mindesc h3:first-of-type, div.mindesc p")
-        .takeWhile { it.text() != "¿Para quién es?" }
-        .joinToString("\n") { it.text() }
-    val genres = doc.select("div.postbody div.genxed a").map { it.text() }
-    val status = null
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class GnrdPlayerResponse(
+        @JsonProperty("p") val p: String? = null
+    )
 
-    val episodes = doc.select("div.postbody div.eplister a").mapNotNull {
-        val name = it.selectFirst("div.epl-title")?.text() ?: return@mapNotNull null
-        val link = it.attr("href")
-        // Extraer temporada y episodio del formato "2x06"
-        val epNum = it.selectFirst("div.epl-num")?.text()?.trim() ?: ""
-        val parts = epNum.split("x")
-        val season = parts.getOrNull(0)?.toIntOrNull()
-        val episode = parts.getOrNull(1)?.toIntOrNull()
-        
-        newEpisode(link) {
-            this.name = name
-            this.season = season
-            this.episode = episode
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class GnrdData(
+        @JsonProperty("t") val t: String? = null,
+        @JsonProperty("langs") val langs: List<GnrdLang>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class GnrdLang(
+        @JsonProperty("label") val label: String? = null,
+        @JsonProperty("servers") val servers: List<GnrdServer>? = null
+    )
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class GnrdServer(
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("src") val src: String? = null
+    )
+
+    private fun gnrdUnpack(packed: String): String {
+        return try {
+            val raw = base64DecodeArray(packed)
+            val key = byteArrayOf(103, 78, 55, 100)
+            val decrypted = ByteArray(raw.size)
+            for (i in raw.indices) {
+                decrypted[i] = (raw[i].toInt() xor key[i and 3].toInt()).toByte()
+            }
+            String(decrypted, Charsets.UTF_8)
+        } catch (e: Exception) {
+            ""
         }
     }
-
-    return newAnimeLoadResponse(title, url, getType(type)) {
-        posterUrl = poster
-        backgroundPosterUrl = backimage
-        addEpisodes(DubStatus.Dubbed, episodes)
-        showStatus = status
-        plot = description
-        tags = genres
-        year = premiereYear
-        posterHeaders = if (poster.contains(mainUrl)) cloudflareKiller.getCookieHeaders(mainUrl).toMap() else emptyMap<String, String>()
-    }
-}
 
     override suspend fun loadLinks(
         data: String,
@@ -143,56 +184,113 @@ override suspend fun load(url: String): LoadResponse? {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val embedUrl = appGetChildMainUrl(data).document
-            .selectFirst("div.player-embed > iframe")?.attr("src") ?: return false
-        
-        val script = appGetChildMainUrl(embedUrl).document
-            .select("script")
-            .firstOrNull { it.data().contains("var videosOriginal") }
-            ?.data() ?: return false
-        
-        // Construir lista de (URL, idioma)
-        val urlsWithLang = mapOf(
-            "videosOriginal" to "VO",
-            "videosLatino" to "Lat",
-            "videosCastellano" to "Cas",
-            "videosSubtitulado" to "Sub"
-        ).flatMap { (varName, langCode) ->
-            Regex("""var $varName = (\[.*?\]);""")
-                .find(script)?.groupValues?.get(1)?.let { arrayContent ->
-                    Regex("""\?id=([^"]+)""")
-                        .findAll(arrayContent)
-                        .map { match -> 
-                            base64Decode(match.groupValues[1]) to langCode 
-                        }
-                        .toList()
-                } ?: emptyList()
-        }
-        
-        // Procesar todas las URLs en paralelo
-        urlsWithLang.amap { (decodedUrl, langCode) ->
-            try {
-                loadExtractor(decodedUrl, mainUrl, subtitleCallback) { link ->
-                    CoroutineScope(Dispatchers.IO).launch {
-                        callback(
-                            newExtractorLink(
-                                name = "$langCode [${link.source}]",
-                                source = "$langCode [${link.source}]",
-                                url = link.url,
-                            ) {
-                                this.quality = link.quality
-                                this.type = link.type
-                                this.referer = link.referer
-                                this.headers = link.headers
-                                this.extractorData = link.extractorData
-                            }
-                        )
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-        
-        return true
-    }
+        val doc = app.get(data).documentLarge
 
+        // Intentar flujo moderno GNPV (XOR decrypt)
+        var pid: String? = null
+        var tok: String? = null
+
+        val scripts = doc.select("script").map { it.data() }
+        for (s in scripts) {
+            if (s.contains("_gnrdPid") && s.contains("_gnrdTok")) {
+                pid = Regex("""_gnrdPid\s*=\s*(\d+)""").find(s)?.groupValues?.get(1)
+                tok = Regex("""_gnrdTok\s*=\s*"([^"]+)"""").find(s)?.groupValues?.get(1)
+                if (pid != null && tok != null) break
+            }
+        }
+
+        if (pid == null) {
+            val btn = doc.selectFirst("[data-id][data-t]")
+            pid = btn?.attr("data-id")
+            tok = btn?.attr("data-t")
+        }
+
+        if (pid != null && tok != null) {
+            try {
+                val playerResp = app.get(
+                    "$mainUrl/wp-json/gnrd/v1/player?id=$pid&t=$tok",
+                    referer = data
+                ).parsedSafe<GnrdPlayerResponse>()
+
+                val packed = playerResp?.p
+                if (!packed.isNullOrEmpty()) {
+                    val unpackedJson = gnrdUnpack(packed)
+                    val gnrdData = tryParseJson<GnrdData>(unpackedJson)
+                    for (langGroup in gnrdData?.langs.orEmpty()) {
+                        val langLabel = langGroup.label ?: "Multi"
+                        for (srv in langGroup.servers.orEmpty()) {
+                            val srvUrl = srv.src ?: continue
+                            loadExtractor(srvUrl, mainUrl, subtitleCallback) { link ->
+                                CoroutineScope(Dispatchers.IO).launch {
+                                    callback(
+                                        newExtractorLink(
+                                            source = this@GnulaHDProvider.name,
+                                            name = "$langLabel [${srv.title ?: link.name}]",
+                                            url = link.url
+                                        ) {
+                                            this.quality = link.quality
+                                            this.type = link.type
+                                            this.referer = link.referer
+                                            this.headers = link.headers
+                                            this.extractorData = link.extractorData
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    return true
+                }
+            } catch (e: Exception) {
+                // Continuar a fallback
+            }
+        }
+
+        // Fallback legado a iframe
+        val embedUrl = doc.selectFirst("div.player-embed > iframe")?.attr("src")
+        if (!embedUrl.isNullOrEmpty()) {
+            val embedDoc = app.get(embedUrl).document
+            val script = embedDoc.select("script").firstOrNull { it.data().contains("var videosOriginal") }?.data()
+            if (script != null) {
+                val urlsWithLang = mapOf(
+                    "videosOriginal" to "VO",
+                    "videosLatino" to "Lat",
+                    "videosCastellano" to "Cas",
+                    "videosSubtitulado" to "Sub"
+                ).flatMap { (varName, langCode) ->
+                    Regex("""var $varName = (\[.*?\]);""").find(script)?.groupValues?.get(1)?.let { arrayContent ->
+                        Regex("""\?id=([^"]+)""").findAll(arrayContent).map { match ->
+                            val decoded = String(base64DecodeArray(match.groupValues[1]), Charsets.UTF_8)
+                            decoded to langCode
+                        }.toList()
+                    } ?: emptyList()
+                }
+
+                for ((decodedUrl, langCode) in urlsWithLang) {
+                    try {
+                        loadExtractor(decodedUrl, mainUrl, subtitleCallback) { link ->
+                            CoroutineScope(Dispatchers.IO).launch {
+                                callback(
+                                    newExtractorLink(
+                                        source = this@GnulaHDProvider.name,
+                                        name = "$langCode [${link.name}]",
+                                        url = link.url
+                                    ) {
+                                        this.quality = link.quality
+                                        this.type = link.type
+                                        this.referer = link.referer
+                                        this.headers = link.headers
+                                        this.extractorData = link.extractorData
+                                    }
+                                )
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+                return true
+            }
+        }
+
+        return false
+    }
 }

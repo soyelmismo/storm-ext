@@ -1,288 +1,161 @@
 package com.stormunblessed
 
-import android.R
-import android.util.Log
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
+import com.lagradost.cloudstream3.base64DecodeArray
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
+import org.jsoup.nodes.Element
+import java.net.URLDecoder
 
-class DoramasFlixProvider:MainAPI() {
-    companion object  {
-        private const val doraflixapi = "https://doraflix.fluxcedene.net/api/gql"
-        private val mediaType = "application/json; charset=utf-8".toMediaType()
-    }
-
+class DoramasFlixProvider : MainAPI() {
     override var mainUrl = "https://doramasflix.co"
     override var name = "Doramasflix"
     override var lang = "mx"
     override val hasMainPage = true
-    override val hasQuickSearch = true
     override val hasChromecastSupport = true
     override val hasDownloadSupport = true
+    override val hasQuickSearch = true
     override val supportedTypes = setOf(
         TvType.AsianDrama,
+        TvType.Movie,
     )
 
-    data class MainDoramas (
-        @JsonProperty("data" ) var data : DataDoramas? = DataDoramas()
-    )
-    data class DataDoramas (
-        @JsonProperty("listDoramas" ) var listDoramas : ArrayList<ListDoramas>? = arrayListOf(),
-        @JsonProperty("searchDorama" ) var searchDorama : ArrayList<ListDoramas>? = arrayListOf(),
-        @JsonProperty("searchMovie"  ) var searchMovie  : ArrayList<ListDoramas>?  = arrayListOf(),
-        @JsonProperty("listSeasons" ) var listSeasons : ArrayList<ListDoramas>? = arrayListOf(),
-        @JsonProperty("detailDorama" ) var detailDorama : DetailDoramaandDoramaMeta? = DetailDoramaandDoramaMeta(),
-        @JsonProperty("detailMovie" ) var detailMovie : DetailDoramaandDoramaMeta? = DetailDoramaandDoramaMeta(),
-        @JsonProperty("paginationEpisode" ) var paginationEpisode : PaginationEpisode? = PaginationEpisode(),
-        @JsonProperty("detailEpisode" ) var detailEpisode : DetailDoramaandDoramaMeta? = DetailDoramaandDoramaMeta(),
-        @JsonProperty("carrouselMovies" ) var carrouselMovies : ArrayList<ListDoramas>? = arrayListOf(),
-        @JsonProperty("paginationDorama" ) var paginationDorama : ListDoramas? = ListDoramas(),
-        @JsonProperty("paginationMovie" ) var paginationMovie : ListDoramas? = ListDoramas()
+    override val mainPage = mainPageOf(
+        "doramas" to "Doramas",
+        "peliculas" to "Películas",
     )
 
-    data class ListDoramas (
-        @JsonProperty("_id"         ) var Id         : String?  = null,
-        @JsonProperty("name"        ) var name       : String?  = null,
-        @JsonProperty("name_es"     ) var nameEs     : String?  = null,
-        @JsonProperty("slug"        ) var slug       : String?  = null,
-        @JsonProperty("poster_path" ) var posterPath : String?  = null,
-        @JsonProperty("isTVShow"    ) var isTVShow   : Boolean? = null,
-        @JsonProperty("poster"      ) var poster     : String?  = null,
-        @JsonProperty("__typename"  ) var _typename  : String?  = null,
-        @JsonProperty("season_number" ) var seasonNumber : Int?    = null,
-        @JsonProperty("items"      ) var items     : ArrayList<ListDoramas>? = arrayListOf(),
-    )
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = "$mainUrl/${request.data}?page=$page"
+        val doc = app.get(url).documentLarge
+        val home = doc.select("a[href*='/doramas/'], a[href*='/peliculas/']")
+            .mapNotNull { it.toSearchResult() }
+            .distinctBy { it.url }
 
-    data class DetailDoramaandDoramaMeta (
-        @JsonProperty("_id"              ) var Id             : String?           = null,
-        @JsonProperty("name"             ) var name           : String?           = null,
-        @JsonProperty("slug"             ) var slug           : String?           = null,
-        @JsonProperty("names"            ) var names          : String?           = null,
-        @JsonProperty("name_es"          ) var nameEs         : String?           = null,
-        @JsonProperty("overview"         ) var overview       : String?           = null,
-        @JsonProperty("languages"        ) var languages      : ArrayList<String>? = arrayListOf(),
-        @JsonProperty("poster_path"      ) var posterPath     : String?           = null,
-        @JsonProperty("backdrop_path"    ) var backdropPath   : String?           = null,
-        @JsonProperty("first_air_date"   ) var firstAirDate   : String?           = null,
-        @JsonProperty("episode_run_time" ) var episodeRunTime : ArrayList<Int>?    = arrayListOf(),
-        @JsonProperty("isTVShow"         ) var isTVShow       : Boolean?          = null,
-        @JsonProperty("premiere"         ) var premiere       : Boolean?          = null,
-        @JsonProperty("poster"           ) var poster         : String?           = null,
-        @JsonProperty("trailer"          ) var trailer        : String?           = null,
-        @JsonProperty("videos"           ) var videos         : ArrayList<String>? = arrayListOf(),
-        @JsonProperty("backdrop"         ) var backdrop       : String?           = null,
-        @JsonProperty("genres"           ) var genres         : ArrayList<GenresAndLabels>? = arrayListOf(),
-        @JsonProperty("labels"           ) var labels         : ArrayList<GenresAndLabels>? = arrayListOf(),
-        @JsonProperty("__typename"       ) var _typename      : String?           = null,
-        @JsonProperty("links_online"  ) var linksOnline  : ArrayList<LinksOnline>? = arrayListOf(),
-        @JsonProperty("still_path"     ) var stillPath     : String? = null,
-        @JsonProperty("episode_number" ) var episodeNumber : Int?    = null,
-        @JsonProperty("season_number"  ) var seasonNumber  : Int?    = null,
-        @JsonProperty("air_date"       ) var airDate       : String? = null,
-        @JsonProperty("serie_id"       ) var serieId       : String? = null,
-        @JsonProperty("season_poster"  ) var seasonPoster  : String? = null,
-        @JsonProperty("serie_poster"   ) var seriePoster   : String? = null,
-    )
-
-
-    data class LinksOnline (
-        @JsonProperty("page"   ) var page   : String? = null,
-        @JsonProperty("server" ) var server : String? = null,
-        @JsonProperty("link"   ) var link   : String? = null,
-        @JsonProperty("lang"   ) var lang   : String? = null
-    )
-
-    data class GenresAndLabels (
-        @JsonProperty("name"       ) var name      : String? = null,
-        @JsonProperty("slug"       ) var slug      : String? = null,
-        @JsonProperty("__typename" ) var _typename : String? = null
-    )
-
-
-    data class DoramasInfo (
-        @JsonProperty("id"   ) var id   : String? = null,
-        @JsonProperty("slug" ) var slug : String? = null,
-        @JsonProperty("type" ) var type : String? = null,
-        @JsonProperty("isTV" ) var isTV : Boolean? = null
-    )
-
-    data class PaginationEpisode (
-        @JsonProperty("items"      ) var items     : ArrayList<DetailDoramaandDoramaMeta> = arrayListOf(),
-        @JsonProperty("__typename" ) var _typename : String?          = null
-    )
-
-    private fun getImageUrl(link: String?): String? {
-        if (link == null) return null
-        return if (link.startsWith("/")) "https://image.tmdb.org/t/p/w1280/$link" else link
+        return newHomePageResponse(
+            list = HomePageList(
+                name = request.name,
+                list = home,
+                isHorizontalImages = false
+            ),
+            hasNext = home.isNotEmpty()
+        )
     }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
-        val items = ArrayList<HomePageList>()
-        val doramasBody = "{\"operationName\":\"listDoramasMobile\",\"variables\":{\"filter\":{\"isTVShow\":false},\"limit\":32,\"sort\":\"_ID_DESC\"},\"query\":\"query listDoramasMobile(\$limit: Int, \$skip: Int, \$sort: SortFindManyDoramaInput, \$filter: FilterFindManyDoramaInput) {\\n  listDoramas(limit: \$limit, skip: \$skip, sort: \$sort, filter: \$filter) {\\n    _id\\n    name\\n    name_es\\n    slug\\n    poster_path\\n    isTVShow\\n    poster\\n    __typename\\n  }\\n}\\n\"}"
-        val peliculasBody = "{\"operationName\":\"paginationMovie\",\"variables\":{\"perPage\":32,\"sort\":\"CREATEDAT_DESC\",\"filter\":{},\"page\":1},\"query\":\"query paginationMovie(\$page: Int, \$perPage: Int, \$sort: SortFindManyMovieInput, \$filter: FilterFindManyMovieInput) {\\n  paginationMovie(page: \$page, perPage: \$perPage, sort: \$sort, filter: \$filter) {\\n    count\\n    pageInfo {\\n      currentPage\\n      hasNextPage\\n      hasPreviousPage\\n      __typename\\n    }\\n    items {\\n      _id\\n      name\\n      name_es\\n      slug\\n      names\\n      poster_path\\n      poster\\n      __typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-        val variedadesBody = "{\"operationName\":\"paginationDorama\",\"variables\":{\"perPage\":32,\"sort\":\"CREATEDAT_DESC\",\"filter\":{\"isTVShow\":true},\"page\":1},\"query\":\"query paginationDorama(\$page: Int, \$perPage: Int, \$sort: SortFindManyDoramaInput, \$filter: FilterFindManyDoramaInput) {\\n  paginationDorama(page: \$page, perPage: \$perPage, sort: \$sort, filter: \$filter) {\\n    count\\n    pageInfo {\\n      currentPage\\n      hasNextPage\\n      hasPreviousPage\\n      __typename\\n    }\\n    items {\\n      _id\\n      name\\n      name_es\\n      slug\\n      names\\n      poster_path\\n      backdrop_path\\n      isTVShow\\n      poster\\n      __typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-        val doraresponse = app.post(doraflixapi, requestBody = doramasBody.toRequestBody(mediaType)).parsed<MainDoramas>()
-        val pelisrresponse = app.post(doraflixapi, requestBody = peliculasBody.toRequestBody(mediaType)).parsed<MainDoramas>()
-        val variedadesresponse = app.post(doraflixapi, requestBody = variedadesBody.toRequestBody(mediaType)).parsed<MainDoramas>()
-        val listdoramas = doraresponse.data?.listDoramas
-        val pelis = pelisrresponse.data?.paginationMovie?.items
-        val vari = variedadesresponse.data?.paginationDorama?.items
-        val home1 = listdoramas?.map { info ->
-            tasa(info)
+    private fun cleanImageUrl(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        if (url.contains("_next/image?url=")) {
+            val raw = url.substringAfter("_next/image?url=").substringBefore("&")
+            return try {
+                URLDecoder.decode(raw, "UTF-8")
+            } catch (_: Exception) {
+                raw
+            }
         }
-        val home2 = pelis?.map { info ->
-            tasa(info)
-        }
-        val home3 = vari?.map {info ->
-            tasa(info)
-        }
-
-        items.add(HomePageList("Doramas", home1!!))
-        items.add(HomePageList("Peliculas", home2!!))
-        items.add(HomePageList("Doramas 2", home3!!))
-        if (items.size <= 0) throw ErrorLoadingException()
-        return newHomePageResponse(items)
+        return if (url.startsWith("/")) "https://image.tmdb.org/t/p/w1280$url" else url
     }
 
-    private fun tasa(
-        info: ListDoramas
-    ): SearchResponse {
-        val title = info.name
-        val slug = info.slug
-        val poster = info.posterPath
-        val realposter = getImageUrl(poster)
-        val id = info.Id
-        val typename = info._typename
-        val istvShow = info.isTVShow
-        val data = "{\"id\":\"$id\",\"slug\":\"$slug\",\"type\":\"$typename\",\"isTV\":$istvShow}"
+    private fun Element.toSearchResult(): SearchResponse? {
+        val href = fixUrlNull(this.attr("href")) ?: return null
+        val img = this.selectFirst("img")
+        val rawImg = img?.attr("src") ?: img?.attr("data-src")
+        val posterUrl = cleanImageUrl(rawImg)
 
-        return newTvSeriesSearchResponse(
-            title!!,
-            data,
-            TvType.AsianDrama,
-        ){
-            this.posterUrl = realposter
+        val title = this.selectFirst("h3, h2, span.title, p")?.text()?.takeIf { it.isNotBlank() }
+            ?: img?.attr("alt")?.takeIf { it.isNotBlank() }
+            ?: href.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+
+        val isMovie = href.contains("/peliculas/")
+        val type = if (isMovie) TvType.Movie else TvType.AsianDrama
+
+        return if (isMovie) {
+            newMovieSearchResponse(title, href, type) {
+                this.posterUrl = posterUrl
+            }
+        } else {
+            newTvSeriesSearchResponse(title, href, type) {
+                this.posterUrl = posterUrl
+            }
         }
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val search = ArrayList<SearchResponse>()
-        val bodyjson = "{\"operationName\":\"searchAll\",\"variables\":{\"input\":\"$query\"},\"query\":\"query searchAll(\$input: String!) {\\n  searchDorama(input: \$input, limit: 5) {\\n    _id\\n    slug\\n    name\\n    name_es\\n    poster_path\\n  isTVShow\\n  poster\\n    __typename\\n  }\\n  searchMovie(input: \$input, limit: 5) {\\n    _id\\n    name\\n    name_es\\n    slug\\n    poster_path\\n    poster\\n    __typename\\n  }\\n}\\n\"}"
-        val response = app.post(doraflixapi, requestBody = bodyjson.toRequestBody(mediaType)).parsed<MainDoramas>()
-        val searchDorama = response.data?.searchDorama
-        val searchMovie = response.data?.searchMovie
-        if (searchDorama!!.isNotEmpty() || searchMovie!!.isNotEmpty())  {
-            searchDorama.map { info->
-                search.add(tasa(info))
-            }
-            searchMovie?.map {info ->
-                search.add(tasa(info))
-            }
-        }
-        return search
+        val url = "$mainUrl/buscar?q=$query"
+        val doc = app.get(url).documentLarge
+        return doc.select("a[href*='/doramas/'], a[href*='/peliculas/']")
+            .mapNotNull { it.toSearchResult() }
+            .distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        //There's ton of shit here
-        val fixed = url.substringAfter("https://www.comamosramen.com/")
-        val parse = parseJson<DoramasInfo>(fixed)
-        val type = parse.type
-        val tvType = if (type!!.contains("Dorama")) TvType.AsianDrama else TvType.Movie
-        val sluginfo = parse.slug
-        val isMovie = tvType == TvType.Movie
-        val id = parse.id
-        val detailMovieBody = "{\"operationName\":\"detailMovieExtra\",\"variables\":{\"slug\":\"$sluginfo\"},\"query\":\"query detailMovieExtra(\$slug: String!) {\\n  detailMovie(filter: {slug: \$slug}) {\\n    name\\n    name_es\\n    overview\\n    languages\\n    popularity\\n  poster_path\\n poster\\n  backdrop_path\\n    backdrop\\n    links_online\\n    __typename\\n genres {\\n      name\\n      slug\\n      __typename\\n    }\\n labels {\\n      name\\n      slug\\n      __typename\\n    }\\n  }\\n}\\n\"}"
-        val detailDoramaRequestbody = "{\"operationName\":\"detailDorama\",\"variables\":{\"slug\":\"$sluginfo\"},\"query\":\"query detailDorama(\$slug: String!) {\\n  detailDorama(filter: {slug: \$slug}) {\\n    _id\\n    name\\n    slug\\n    cast\\n    names\\n    name_es\\n    overview\\n    languages\\n    poster_path\\n    backdrop_path\\n    first_air_date\\n    episode_run_time\\n    isTVShow\\n    premiere\\n    poster\\n    trailer\\n    videos\\n    backdrop\\n    genres {\\n      name\\n      slug\\n      __typename\\n    }\\n    labels {\\n      name\\n      slug\\n      __typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-        val metadataRequestBody = if (!isMovie) detailDoramaRequestbody.toRequestBody(mediaType) else detailMovieBody.toRequestBody(mediaType)
-        val metadatarequest = app.post(doraflixapi, requestBody = metadataRequestBody).parsed<MainDoramas>()
-        val metaInfo = if (isMovie) metadatarequest.data?.detailMovie else metadatarequest.data?.detailDorama
-        val title = metaInfo?.name
-        val plot = metaInfo?.overview
-        val posterinfo = metaInfo?.poster ?: metaInfo?.posterPath ?: ""
-        val poster = getImageUrl(posterinfo)
-        val backgroundPosterinfo = metaInfo?.backdrop ?: metaInfo?.backdropPath ?: ""
-        val bgposter = getImageUrl(backgroundPosterinfo)
-        val tags = ArrayList<String>()
-        val tags1 = metaInfo?.genres?.map { tags.add(it.name!!) }
-        val tags2 = metaInfo?.labels?.map { tags.add(it.name!!) }
-        val episodes = ArrayList<Episode>()
-        var movieData: String? = ""
-        val datatwo = "{\"id\":\"${parse.id}\",\"slug\":\"${parse.slug}\",\"type\":\"${parse.type}\",\"isTV\":${parse.isTV}}"
+        val doc = app.get(url).documentLarge
+        val isMovie = url.contains("/peliculas/")
 
-        if (!isMovie) {
-            val listSeasonsbody = "{\"operationName\":\"listSeasons\",\"variables\":{\"serie_id\":\"$id\"},\"query\":\"query listSeasons(\$serie_id: MongoID!) {\\n  listSeasons(sort: NUMBER_ASC, filter: {serie_id: \$serie_id}) {\\n    slug\\n    season_number\\n    poster_path\\n    air_date\\n    serie_name\\n    poster\\n    backdrop\\n    __typename\\n  }\\n}\\n\"}"
-            val response = app.post(doraflixapi, requestBody = listSeasonsbody.toRequestBody(mediaType)).parsed<MainDoramas>()
-            response.data?.listSeasons?.map {
-                val seasonNum = it.seasonNumber
-                val paginationepisodesBody = "{\"operationName\":\"listEpisodesPagination\",\"variables\":{\"serie_id\":\"$id\",\"season_number\":$seasonNum,\"page\":1},\"query\":\"query listEpisodesPagination(\$page: Int!, \$serie_id: MongoID!, \$season_number: Float!) {\\n  paginationEpisode(\\n    page: \$page\\n    perPage: 1000\\n    sort: NUMBER_ASC\\n    filter: {type_serie: \\\"dorama\\\", serie_id: \$serie_id, season_number: \$season_number}\\n  ) {\\n       items {\\n      _id\\n      name\\n      still_path\\n   overview\\n   episode_number\\n      season_number\\n      air_date\\n      slug\\n      serie_id\\n   season_poster\\n      serie_poster\\n      poster\\n      backdrop\\n      __typename\\n    }\\n    pageInfo {\\n      hasNextPage\\n      __typename\\n    }\\n    __typename\\n  }\\n}\\n\"}"
-                val episodesReq = app.post(doraflixapi, requestBody = paginationepisodesBody.toRequestBody(mediaType)).parsed<MainDoramas>()
-                episodesReq.data?.paginationEpisode?.items?.map {
-                    val season = it.seasonNumber
-                    val epnum = it.episodeNumber
-                    val epSlug = it.slug
-                    val epthumb = getImageUrl(it.stillPath)
-                    val name = it.name
-                    episodes.add(
-                        newEpisode(
-                            epSlug!!,
-                        ){
-                            this.name = name
-                            this.season = season
-                            this.episode= epnum
-                            this.posterUrl= epthumb
+        val title = doc.selectFirst("h1")?.text()
+            ?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.substringBefore(" —")?.substringBefore(" |")
+            ?: url.substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
 
-                        })
-                }
+        val poster = cleanImageUrl(
+            doc.selectFirst("meta[property=og:image]")?.attr("content")
+                ?: doc.selectFirst("img[alt*='Banner'], div.aspect-2/3 img, img[alt*='$title']")?.attr("src")
+        )
+        val backimage = cleanImageUrl(
+            doc.selectFirst("meta[property=og:image]")?.attr("content")
+                ?: doc.selectFirst("div[style*='background-image']")?.attr("style")?.substringAfter("url('")?.substringBefore("')")
+        )
+
+        val plot = doc.selectFirst("meta[property=og:description]")?.attr("content")
+            ?: doc.selectFirst("div:contains(Sinopsis) + p, p.text-muted-foreground, p.leading-relaxed")?.text()
+
+        val year = doc.select("span:matchesOwn(\\d{4})").firstOrNull()?.text()?.toIntOrNull()
+        val tags = doc.select("a[href*='/generos/'], a[href*='/etiquetas/'], div.flex-wrap span").map { it.text().trim() }.filter { it.isNotBlank() }
+
+        if (isMovie) {
+            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backimage ?: poster
+                this.plot = plot
+                this.tags = tags
+                this.year = year
             }
-        } else if (isMovie) {
-            val linksJson = metaInfo?.linksOnline?.toJson()
-            movieData = linksJson
-        }
-        return when (tvType) {
-            TvType.AsianDrama -> {
-                newTvSeriesLoadResponse(title!!,
-                    datatwo, tvType, episodes,){
-                    this.posterUrl = poster
-                    this.backgroundPosterUrl = bgposter
-                    this.plot = plot
-                    this.tags = tags.distinct().toList()
+        } else {
+            val epLinks = doc.select("a[href*='/capitulos/']")
+            val episodes = epLinks.mapNotNull { epEl ->
+                val epUrl = fixUrlNull(epEl.attr("href")) ?: return@mapNotNull null
+                val epText = epEl.text()
+                val s = Regex("""(\d+)x(\d+)""").find(epUrl)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val e = Regex("""(\d+)x(\d+)""").find(epUrl)?.groupValues?.get(2)?.toIntOrNull()
+                    ?: Regex("""ep\.\s*(\d+)""").find(epText)?.groupValues?.get(1)?.toIntOrNull()
+                val epName = "Episodio $e"
+                newEpisode(epUrl) {
+                    this.name = epName
+                    this.season = s
+                    this.episode = e
                 }
-            }
-            TvType.Movie -> {
-                newMovieLoadResponse(title!!, datatwo, tvType, movieData){
-                    this.posterUrl = poster
-                    this.plot = plot
-                    this.backgroundPosterUrl = bgposter
-                    this.tags = tags.distinct().toList()
-                }
-            }
-            else -> null
-        }
+            }.distinctBy { it.data }
 
-    }
-
-    private fun getLangById(id: String): String{
-        return when(id){
-            "13109" -> "Coreano"
-            "13110" -> "Japones"
-            "13111" -> "Mandarin"
-            "13112" -> "Tailandes"
-            "37" -> "Castellano"
-            "38" -> "Latino"
-            "192" -> "Subtitulado"
-            else -> id
+            return newTvSeriesLoadResponse(title, url, TvType.AsianDrama, episodes) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = backimage ?: poster
+                this.plot = plot
+                this.tags = tags
+                this.year = year
+            }
         }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    data class ShortenerJwtPayload(
+        @JsonProperty("link") val link: String? = null,
+        @JsonProperty("server") val server: String? = null,
+    )
 
     override suspend fun loadLinks(
         data: String,
@@ -290,67 +163,51 @@ class DoramasFlixProvider:MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.contains("link")) {
-            val parse = parseJson<List<LinksOnline>>(data)
-            parse.map {
-                val link = it.link
-                loadSourceNameExtractor(getLangById(it.lang ?: ""),fixHostsLinks(link!!), data, subtitleCallback, callback)
-            }
-        } else {
-            val episodeslinkRequestbody = "{\"operationName\":\"GetEpisodeLinks\",\"variables\":{\"episode_slug\":\"${data.replaceFirst("$mainUrl/", "")}\"},\"query\":\"query GetEpisodeLinks(\$episode_slug: String!) {\\n  detailEpisode(filter: {slug: \$episode_slug, type_serie: \\\"dorama\\\"}) {\\n    links_online\\n   }\\n}\\n\"}"
-            val request = app.post(doraflixapi, requestBody = episodeslinkRequestbody.toRequestBody(mediaType)).parsedSafe<MainDoramas>()
-            //val test = app.post(doraflixapi, requestBody = episodeslinkRequestbody.toRequestBody(mediaType)).text
-            //println("TESTEO $test")
-            request?.data?.detailEpisode?.linksOnline?.map {
-                val link = it.link?.replace("https://swdyu.com","https://streamwish.to")?.replace("https://uqload.to","https://uqload.co")
-                //println("LINK $link")
-                loadSourceNameExtractor(getLangById(it.lang ?: ""),fixHostsLinks(link!!), data, subtitleCallback, callback)
-            }
-        }
-        return true
-    }
-}
+        val response = app.get(data)
+        val html = response.text
 
-suspend fun loadSourceNameExtractor(
-    source: String,
-    url: String,
-    referer: String? = null,
-    subtitleCallback: (SubtitleFile) -> Unit,
-    callback: (ExtractorLink) -> Unit,
-) {
-    loadExtractor(url, referer, subtitleCallback) { link ->
-        CoroutineScope(Dispatchers.IO).launch {
-            callback.invoke(
-                newExtractorLink(
-                    "$source[${link.source}]",
-                    "$source[${link.source}]",
-                    link.url,
-                ) {
-                    this.quality = link.quality
-                    this.type = link.type
-                    this.referer = link.referer
-                    this.headers = link.headers
-                    this.extractorData = link.extractorData
+        // Find all JWT tokens from embedshortener.co/e/...
+        val tokens = Regex("""embedshortener\.co/e/([A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+){2})""").findAll(html)
+            .map { it.groupValues[1] }
+            .distinct()
+            .toList()
+
+        var foundAny = false
+        for (token in tokens) {
+            try {
+                val parts = token.split(".")
+                if (parts.size < 2) continue
+                val payloadJson = String(base64DecodeArray(parts[1]), Charsets.UTF_8)
+                val payload = tryParseJson<ShortenerJwtPayload>(payloadJson) ?: continue
+                var rawLink = payload.link ?: continue
+
+                var streamUrl = String(base64DecodeArray(rawLink), Charsets.UTF_8)
+                if (streamUrl.startsWith("aHR0")) {
+                    streamUrl = String(base64DecodeArray(streamUrl), Charsets.UTF_8)
                 }
-            )
+
+                if (streamUrl.startsWith("http")) {
+                    foundAny = true
+                    loadExtractor(streamUrl, mainUrl, subtitleCallback) { link ->
+                        CoroutineScope(Dispatchers.IO).launch {
+                            callback(
+                                newExtractorLink(
+                                    source = this@DoramasFlixProvider.name,
+                                    name = link.name,
+                                    url = link.url
+                                ) {
+                                    this.quality = link.quality
+                                    this.type = link.type
+                                    this.referer = link.referer
+                                    this.headers = link.headers
+                                    this.extractorData = link.extractorData
+                                }
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
         }
+        return foundAny
     }
 }
-
-fun fixHostsLinks(url: String): String {
-    return url
-        .replaceFirst("https://hglink.to", "https://streamwish.to")
-        .replaceFirst("https://swdyu.com", "https://streamwish.to")
-        .replaceFirst("https://cybervynx.com", "https://streamwish.to")
-        .replaceFirst("https://dumbalag.com", "https://streamwish.to")
-        .replaceFirst("https://mivalyo.com", "https://vidhidepro.com")
-        .replaceFirst("https://dinisglows.com", "https://vidhidepro.com")
-        .replaceFirst("https://dhtpre.com", "https://vidhidepro.com")
-        .replaceFirst("https://filemoon.link", "https://filemoon.sx")
-        .replaceFirst("https://sblona.com", "https://watchsb.com")
-        .replaceFirst("https://lulu.st", "https://lulustream.com")
-        .replaceFirst("https://uqload.io", "https://uqload.com")
-        .replaceFirst("https://uqload.cx", "https://uqload.com")
-        .replaceFirst("https://do7go.com", "https://dood.la")
-}
-
